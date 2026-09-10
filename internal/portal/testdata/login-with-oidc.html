@@ -1,0 +1,52 @@
+<!--
+Synthetic fixture modeled on a real BusPlannerWeb Login page (findmyschool.ca
+style, which additionally offers a third-party board OIDC login button).
+All IDs/structure are real; all data is fabricated.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<body>
+<form method="post" action="./Login?ReturnUrl=%2fSubscriptions%2fChildTransportInfo&amp;LoginType=Subscriber&amp;showParentPopup=False" id="mainForm">
+<div class="aspNetHidden">
+<input type="hidden" name="__LASTFOCUS" id="__LASTFOCUS" value="" />
+<input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="" />
+<input type="hidden" name="__EVENTARGUMENT" id="__EVENTARGUMENT" value="" />
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="FAKEVIEWSTATE123==" />
+</div>
+<div class="aspNetHidden">
+<input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="C2EE9ABB" />
+<input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="FAKEEVENTVALIDATION==" />
+</div>
+<input type="hidden" name="ctl00$hfApplicationRoot" id="hfApplicationRoot" value="/" />
+<input type="hidden" name="ctl00$hfDateFormat" id="hfDateFormat" value="yy-mm-dd" />
+
+<div class="row form-group">
+    <label for="MainContent_glogin_lLogin_UserName">Email</label>
+    <input name="ctl00$MainContent$glogin$lLogin$UserName" type="text" id="MainContent_glogin_lLogin_UserName" class="form-control required" />
+</div>
+<div class="row form-group">
+    <label for="Password">Password</label>
+    <input name="ctl00$MainContent$glogin$lLogin$Password" type="password" id="Password" class="form-control required" autocomplete="off" />
+</div>
+<div class="row mb-4 mt-0">
+    <input id="MainContent_glogin_lLogin_RememberMe" type="checkbox" name="ctl00$MainContent$glogin$lLogin$RememberMe" />
+</div>
+<input type="button" name="ctl00$MainContent$glogin$lLogin$btnLogin" value="Log In" onclick=" this.disabled = true;__doPostBack('ctl00$MainContent$glogin$lLogin$btnLogin','')" id="MainContent_glogin_lLogin_btnLogin" class="btn btn-primary" />
+
+<div id="socialLoginList">
+    <button type="submit" class="btn btn-primary" name="provider" value="SubscriberOpenIDConnect_0eb16d38-23e9-4314-9d05-a0dca58e43ec">
+        Returning UGDSB parent login
+    </button>
+</div>
+
+<select name="ctl00$_cbDatabase" id="_cbDatabase" class="form-control">
+	<option selected="selected" value="2409cbb4-234a-4208-8a7e-63763cdcb6dc">2026-2027</option>
+	<option value="f833288f-fef8-4135-a4db-41ad185aa3e4">WCDSB 2027-2028</option>
+</select>
+<select name="ctl00$ddlLanguages" id="ddlLanguages" class="form-control">
+	<option selected="selected" value="en-CA">English (Canada)</option>
+	<option value="fr-CA">français (Canada)</option>
+</select>
+</form>
+</body>
+</html>

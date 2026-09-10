@@ -1,0 +1,42 @@
+<!--
+Synthetic fixture modeled on a real BusPlannerWeb Login page
+(infobus.francobus.ca style — no third-party OIDC option).
+All IDs/structure are real; all data is fabricated.
+-->
+<!DOCTYPE html>
+<html lang="fr">
+<body>
+<form method="post" action="./Login?ReturnUrl=%2fSubscriptions%2fChildTransportInfo&amp;LoginType=Subscriber&amp;showParentPopup=False" id="mainForm">
+<div class="aspNetHidden">
+<input type="hidden" name="__LASTFOCUS" id="__LASTFOCUS" value="" />
+<input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="" />
+<input type="hidden" name="__EVENTARGUMENT" id="__EVENTARGUMENT" value="" />
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="FAKEVIEWSTATE456==" />
+</div>
+<div class="aspNetHidden">
+<input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="F9A8EB1B" />
+<input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="FAKEEVENTVALIDATION2==" />
+</div>
+<input type="hidden" name="ctl00$hfApplicationRoot" id="hfApplicationRoot" value="/" />
+<input type="hidden" name="ctl00$hfDateFormat" id="hfDateFormat" value="yy-mm-dd" />
+
+<div class="row form-group">
+    <label for="MainContent_glogin_lLogin_UserName">Courriel</label>
+    <input name="ctl00$MainContent$glogin$lLogin$UserName" type="text" id="MainContent_glogin_lLogin_UserName" class="form-control required" />
+</div>
+<div class="row form-group">
+    <label for="Password">Mot de passe</label>
+    <input name="ctl00$MainContent$glogin$lLogin$Password" type="password" id="Password" class="form-control required" autocomplete="off" />
+</div>
+<div class="row mb-4 mt-0">
+    <input id="MainContent_glogin_lLogin_RememberMe" type="checkbox" name="ctl00$MainContent$glogin$lLogin$RememberMe" />
+</div>
+<input type="button" name="ctl00$MainContent$glogin$lLogin$btnLogin" value="Connexion" onclick=" this.disabled = true;__doPostBack('ctl00$MainContent$glogin$lLogin$btnLogin','')" id="MainContent_glogin_lLogin_btnLogin" class="btn btn-primary" />
+
+<select name="ctl00$ddlLanguages" id="ddlLanguages" class="form-control">
+	<option selected="selected" value="fr-CA">français (Canada)</option>
+	<option value="en-CA">English (Canada)</option>
+</select>
+</form>
+</body>
+</html>

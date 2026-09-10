@@ -1,0 +1,56 @@
+# Example bpw-dispatch config. Copy to config.yaml and fill in real
+# credentials; keep config.yaml out of version control.
+
+# Where to persist cached schedule/alert state between runs.
+# Relative paths are resolved from the working directory bpw-dispatch is
+# run from (set an absolute path if that's not guaranteed, e.g. under cron).
+state_file: state.json
+
+notifiers:
+  ntfy-parents:
+    type: ntfy
+    topic: bpw-dispatch-changeme1 # pick a hard-to-guess topic name
+  ntfy-grandma:
+    type: ntfy
+    topic: bpw-dispatch-changeme2
+
+kids:
+  - id: kid1
+    school: "École élémentaire L'Odyssée"
+    bus_label: "Route 140" # optional; defaults to the scraped route id
+    portal:
+      domain: www.findmyschool.ca
+      username: parent1@example.com
+      password: "change-me"
+    # alert_match overrides how this kid's alerts are matched; both are
+    # case-insensitive substrings against the Alerts API's RouteRun /
+    # AffectsSchools fields. Leave bus unset to use the route id scraped
+    # from the portal each day; verify the match once real alerts are seen.
+    alert_match:
+      bus: "140"
+    notifiers: [ntfy-parents]
+    sessions:
+      morning:
+        days: [mon, tue, wed, thu, fri]
+      afternoon:
+        days: [mon, tue, wed, thu, fri]
+
+  - id: kid2
+    school: "École secondaire David-Saint-Jacques"
+    portal:
+      domain: infobus.francobus.ca
+      username: parent2@example.com
+      password: "change-me"
+    alert_match:
+      bus: "DSJ500"
+    notifiers: [ntfy-parents]
+    sessions:
+      morning:
+        days: [mon, tue, wed, thu, fri]
+      afternoon:
+        days: [mon, tue, wed, thu, fri]
+        # Grandma picks this kid up Wed/Fri afternoons and only wants
+        # alerts on those two days.
+        day_overrides:
+          wed: [ntfy-grandma]
+          fri: [ntfy-grandma]
