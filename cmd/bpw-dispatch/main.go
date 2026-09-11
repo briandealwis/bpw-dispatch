@@ -5,8 +5,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"log"
+	"net/http"
 	"os"
 
 	"github.com/briandealwis/bpw-dispatch/internal/app"
@@ -20,6 +22,7 @@ func main() {
 	statePath := flag.String("state", "", "path to the state file (default: config's state_file, or state.json)")
 	debug := flag.Bool("debug", false, "dump fetched portal HTML for troubleshooting login/scraping")
 	debugDir := flag.String("debug-dir", "debug", "directory for -debug HTML dumps")
+	insecure := flag.Bool("insecure", false, "skip TLS certificate verification (use when the portal's cert is expired)")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
@@ -47,6 +50,11 @@ func main() {
 	if pc, ok := a.Portal.(*portal.Client); ok {
 		pc.Debug = *debug
 		pc.DebugDir = *debugDir
+		if *insecure {
+			pc.HTTPClient.Transport = &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			}
+		}
 	}
 
 	runErr := a.Run(context.Background())
