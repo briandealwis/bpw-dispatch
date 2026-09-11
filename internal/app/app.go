@@ -21,8 +21,12 @@ import (
 // ScheduleFetcher logs in to a parent portal and returns a kid's current
 // schedule. Implemented by *portal.Client; kept as an interface here so App
 // can be tested with a fake.
+//
+// cachedToken is a BPWebAuth cookie value saved from a previous call; pass
+// the empty string on the first call. The returned token should be stored
+// in state and passed back on the next call to avoid a full login round-trip.
 type ScheduleFetcher interface {
-	FetchSchedule(ctx context.Context, domain, username, password string) (*state.Schedule, error)
+	FetchSchedule(ctx context.Context, domain, username, password, cachedToken string) (*state.Schedule, string, error)
 }
 
 // AlertsFetcher fetches and filters bus alerts for a domain. Implemented by
@@ -90,7 +94,7 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, today string, sess ses
 	var errs []error
 
 	if ks.ScheduleDate != today {
-		newSched, err := a.Portal.FetchSchedule(ctx, kid.Portal.Domain, kid.Portal.Username, kid.Portal.Password)
+		newSched, newToken, err := a.Portal.FetchSchedule(ctx, kid.Portal.Domain, kid.Portal.Username, kid.Portal.Password, ks.AuthToken)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("kid %s: fetching schedule: %w", kid.ID, err))
 		} else {
@@ -99,6 +103,7 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, today string, sess ses
 			}
 			ks.Schedule = newSched
 			ks.ScheduleDate = today
+			ks.AuthToken = newToken
 		}
 	}
 

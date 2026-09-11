@@ -56,6 +56,7 @@ type KidState struct {
 	Schedule     *Schedule     `json:"schedule,omitempty"`
 	ScheduleDate string        `json:"schedule_date,omitempty"` // YYYY-MM-DD schedule was last fetched
 	Session      *SessionState `json:"session,omitempty"`
+	AuthToken    string        `json:"auth_token,omitempty"` // cached BPWebAuth cookie for skipping login
 }
 
 // State is the full contents of the on-disk state file, keyed by kid id.
