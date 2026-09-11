@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/briandealwis/bpw-dispatch/internal/alertsapi"
 	"github.com/briandealwis/bpw-dispatch/internal/app"
 	"github.com/briandealwis/bpw-dispatch/internal/config"
 	"github.com/briandealwis/bpw-dispatch/internal/portal"
@@ -47,14 +48,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("initializing: %v", err)
 	}
+	if *insecure {
+		insecureTransport := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		}
+		if pc, ok := a.Portal.(*portal.Client); ok {
+			pc.HTTPClient.Transport = insecureTransport
+		}
+		if ac, ok := a.Alerts.(*alertsapi.Client); ok {
+			ac.HTTPClient.Transport = insecureTransport
+		}
+	}
 	if pc, ok := a.Portal.(*portal.Client); ok {
 		pc.Debug = *debug
 		pc.DebugDir = *debugDir
-		if *insecure {
-			pc.HTTPClient.Transport = &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-			}
-		}
 	}
 
 	runErr := a.Run(context.Background())
