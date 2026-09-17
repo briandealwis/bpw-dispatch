@@ -9,9 +9,18 @@ import (
 	"github.com/briandealwis/bpw-dispatch/internal/config"
 )
 
-// Notifier delivers a single text message to one destination.
+// Message is a single alert to deliver.
+type Message struct {
+	Text string
+	// ClickURL, if set, is opened when the notification itself is tapped
+	// (e.g. ntfy's "Click" action), so the recipient can jump straight to
+	// the relevant portal page for details.
+	ClickURL string
+}
+
+// Notifier delivers a single message to one destination.
 type Notifier interface {
-	Send(ctx context.Context, text string) error
+	Send(ctx context.Context, msg Message) error
 }
 
 // Build constructs the configured notifier registry, keyed by name.

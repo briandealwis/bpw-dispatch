@@ -32,14 +32,18 @@ func NewNtfy(cfg config.Notifier) *Ntfy {
 	}
 }
 
-// Send publishes text to the configured ntfy topic.
-func (n *Ntfy) Send(ctx context.Context, text string) error {
+// Send publishes msg to the configured ntfy topic. If msg.ClickURL is set,
+// tapping the notification opens it (ntfy's "Click" action).
+func (n *Ntfy) Send(ctx context.Context, msg Message) error {
 	url := strings.TrimRight(n.Server, "/") + "/" + n.Topic
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(text))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(msg.Text))
 	if err != nil {
 		return fmt.Errorf("building ntfy request: %w", err)
 	}
 	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	if msg.ClickURL != "" {
+		req.Header.Set("X-Click", msg.ClickURL)
+	}
 
 	resp, err := n.HTTPClient.Do(req)
 	if err != nil {

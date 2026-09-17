@@ -11,9 +11,10 @@ import (
 )
 
 func TestNtfy_Send(t *testing.T) {
-	var gotPath, gotBody string
+	var gotPath, gotBody, gotClick string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		gotClick = r.Header.Get("X-Click")
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)
 		w.WriteHeader(http.StatusOK)
@@ -21,7 +22,8 @@ func TestNtfy_Send(t *testing.T) {
 	defer srv.Close()
 
 	n := NewNtfy(config.Notifier{Type: "ntfy", Server: srv.URL, Topic: "my-topic"})
-	if err := n.Send(context.Background(), "hello world"); err != nil {
+	err := n.Send(context.Background(), Message{Text: "hello world", ClickURL: "https://example.com/Alerts"})
+	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if gotPath != "/my-topic" {
@@ -29,6 +31,27 @@ func TestNtfy_Send(t *testing.T) {
 	}
 	if gotBody != "hello world" {
 		t.Errorf("body = %q, want %q", gotBody, "hello world")
+	}
+	if gotClick != "https://example.com/Alerts" {
+		t.Errorf("X-Click = %q, want https://example.com/Alerts", gotClick)
+	}
+}
+
+func TestNtfy_Send_NoClickURL(t *testing.T) {
+	var gotClick string
+	gotClickSet := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotClick, gotClickSet = r.Header.Get("X-Click"), r.Header.Get("X-Click") != ""
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n := NewNtfy(config.Notifier{Server: srv.URL, Topic: "t"})
+	if err := n.Send(context.Background(), Message{Text: "hi"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if gotClickSet {
+		t.Errorf("expected no X-Click header when ClickURL is unset, got %q", gotClick)
 	}
 }
 
@@ -39,7 +62,7 @@ func TestNtfy_Send_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	n := NewNtfy(config.Notifier{Server: srv.URL, Topic: "t"})
-	if err := n.Send(context.Background(), "hi"); err == nil {
+	if err := n.Send(context.Background(), Message{Text: "hi"}); err == nil {
 		t.Fatal("expected an error for a non-2xx response")
 	}
 }

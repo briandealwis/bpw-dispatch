@@ -19,6 +19,10 @@ Each run:
    then only updates.
 4. Alert text never includes the child's name — only school and bus, e.g.:
    `École élémentaire L'Odyssée, Route 140: Bus delayed by 10-15 minutes`
+5. Each ntfy.sh notification is sent with a click-through link (ntfy's
+   `X-Click` action) to the relevant portal page for details: the Alerts
+   page for bus-status messages, the ChildTransportInfo page for
+   schedule-change messages. Tapping the notification opens it directly.
 
 ## Building
 

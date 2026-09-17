@@ -95,7 +95,7 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, today string, sess ses
 			errs = append(errs, fmt.Errorf("kid %s: fetching schedule: %w", kid.ID, err))
 		} else {
 			if ks.Schedule != nil && !ks.Schedule.Equal(newSched) {
-				a.send(ctx, kid.Notifiers, formatScheduleChange(kid, ks.Schedule, newSched), &errs)
+				a.send(ctx, kid.Notifiers, formatScheduleChange(kid, ks.Schedule, newSched), portalScheduleURL(kid.Portal.Domain), &errs)
 			}
 			ks.Schedule = newSched
 			ks.ScheduleDate = today
@@ -130,7 +130,7 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, today string, sess ses
 
 	msg := formatAlertMessage(kid, leg, alerts)
 	if !ks.Session.Sent || msg != ks.Session.LastMessage {
-		a.send(ctx, notifierNames, msg, &errs)
+		a.send(ctx, notifierNames, msg, portalAlertsURL(kid.Portal.Domain), &errs)
 		ks.Session.LastMessage = msg
 		ks.Session.Sent = true
 	}
@@ -138,17 +138,29 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, today string, sess ses
 	return errors.Join(errs...)
 }
 
-func (a *App) send(ctx context.Context, notifierNames []string, text string, errs *[]error) {
+func (a *App) send(ctx context.Context, notifierNames []string, text, clickURL string, errs *[]error) {
+	msg := notify.Message{Text: text, ClickURL: clickURL}
 	for _, name := range notifierNames {
 		n, ok := a.Notifiers[name]
 		if !ok {
 			*errs = append(*errs, fmt.Errorf("notifier %q not found", name))
 			continue
 		}
-		if err := n.Send(ctx, text); err != nil {
+		if err := n.Send(ctx, msg); err != nil {
 			*errs = append(*errs, fmt.Errorf("sending via %q: %w", name, err))
 		}
 	}
+}
+
+// portalScheduleURL is where a parent can see a kid's current pickup/dropoff
+// schedule in detail, linked from schedule-change alerts.
+func portalScheduleURL(domain string) string {
+	return "https://" + domain + "/Subscriptions/ChildTransportInfo"
+}
+
+// portalAlertsURL is the portal's Alerts page, linked from bus-alert messages.
+func portalAlertsURL(domain string) string {
+	return "https://" + domain + "/Alerts"
 }
 
 func scheduleLeg(sched *state.Schedule, sess session.Session) *state.Leg {

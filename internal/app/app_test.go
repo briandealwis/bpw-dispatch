@@ -39,11 +39,21 @@ func (f *fakeAlertsFetcher) FetchAndMatch(_ context.Context, _, _, _ string) ([]
 	return f.alerts, nil
 }
 
-type fakeNotifier struct{ sent []string }
+type fakeNotifier struct{ sent []notify.Message }
 
-func (f *fakeNotifier) Send(_ context.Context, text string) error {
-	f.sent = append(f.sent, text)
+func (f *fakeNotifier) Send(_ context.Context, msg notify.Message) error {
+	f.sent = append(f.sent, msg)
 	return nil
+}
+
+// texts returns just the message text of everything sent, for assertions
+// that don't care about ClickURL.
+func (f *fakeNotifier) texts() []string {
+	out := make([]string, len(f.sent))
+	for i, m := range f.sent {
+		out[i] = m.Text
+	}
+	return out
 }
 
 // wed9am and wed2pm are a fixed Wednesday morning/afternoon, and thu9am the
@@ -111,8 +121,11 @@ func TestRun_FirstRun_SendsInitialAllClear(t *testing.T) {
 	if af.calls != 1 {
 		t.Errorf("alerts fetched %d times, want 1", af.calls)
 	}
-	if len(mainN.sent) != 1 || mainN.sent[0] != "Example School, 140: Operating as scheduled" {
+	if len(mainN.sent) != 1 || mainN.sent[0].Text != "Example School, 140: Operating as scheduled" {
 		t.Errorf("main notifier got %v", mainN.sent)
+	}
+	if want := "https://example.com/Alerts"; mainN.sent[0].ClickURL != want {
+		t.Errorf("ClickURL = %q, want %q", mainN.sent[0].ClickURL, want)
 	}
 	if len(grandmaN.sent) != 0 {
 		t.Errorf("grandma should not be notified on a non-override day, got %v", grandmaN.sent)
@@ -174,11 +187,11 @@ func TestRun_AlertChangeMidSession_Resends(t *testing.T) {
 	if len(mainN.sent) != 2 {
 		t.Fatalf("expected 2 messages (all-clear, then delay), got %v", mainN.sent)
 	}
-	if mainN.sent[0] != "Example School, 140: Operating as scheduled" {
-		t.Errorf("first message = %q", mainN.sent[0])
+	if mainN.sent[0].Text != "Example School, 140: Operating as scheduled" {
+		t.Errorf("first message = %q", mainN.sent[0].Text)
 	}
-	if mainN.sent[1] != "Example School, 140: Bus Delayed - 10 to 19 minutes" {
-		t.Errorf("second message = %q", mainN.sent[1])
+	if mainN.sent[1].Text != "Example School, 140: Bus Delayed - 10 to 19 minutes" {
+		t.Errorf("second message = %q", mainN.sent[1].Text)
 	}
 }
 
@@ -202,14 +215,17 @@ func TestRun_ScheduleChange_SendsChangeAlertToKidDefaultNotifiers(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	found := false
-	for _, m := range mainN.sent {
-		if m == "Example School: schedule changed - morning: bus now 141 (was 140)" {
-			found = true
+	var change *notify.Message
+	for i, m := range mainN.sent {
+		if m.Text == "Example School: schedule changed - morning: bus now 141 (was 140)" {
+			change = &mainN.sent[i]
 		}
 	}
-	if !found {
-		t.Errorf("expected a schedule-change message, got %v", mainN.sent)
+	if change == nil {
+		t.Fatalf("expected a schedule-change message, got %v", mainN.sent)
+	}
+	if want := "https://example.com/Subscriptions/ChildTransportInfo"; change.ClickURL != want {
+		t.Errorf("schedule-change ClickURL = %q, want %q", change.ClickURL, want)
 	}
 	if len(grandmaN.sent) != 0 {
 		t.Errorf("schedule-change alerts use the kid's default notifiers, not the day override; got %v sent to grandma", grandmaN.sent)
@@ -239,7 +255,7 @@ func TestRun_SessionBoundary_ResetsAndResendsAllClear(t *testing.T) {
 	if len(mainN.sent) != 2 {
 		t.Fatalf("expected one message per session (morning, afternoon), got %v", mainN.sent)
 	}
-	if mainN.sent[0] != mainN.sent[1] {
+	if mainN.sent[0].Text != mainN.sent[1].Text {
 		t.Errorf("both sessions' all-clear text should read the same: %v", mainN.sent)
 	}
 }
