@@ -71,56 +71,132 @@ func (c *Client) dump(name string, r io.Reader) {
 	_ = os.WriteFile(filepath.Join(c.DebugDir, name), data, 0o600)
 }
 
-// FetchSchedule logs in to the given domain's parent portal and returns the
-// current bus/pickup/dropoff schedule for the logged-in child.
-func (c *Client) FetchSchedule(ctx context.Context, domain, username, password string) (*state.Schedule, error) {
+// FetchSchedule returns the current bus schedule for the logged-in child.
+//
+// If cachedToken (a previously saved BPWebAuth cookie value) is non-empty,
+// it is tried first — skipping the full login round-trip. On failure (token
+// expired or invalid) the full login flow is performed automatically.
+//
+// The returned token is the BPWebAuth value to persist for the next call; it
+// may equal cachedToken (if the cached token was still valid) or be a freshly
+// issued value (after a new login).
+func (c *Client) FetchSchedule(ctx context.Context, domain, username, password, cachedToken string) (*state.Schedule, string, error) {
+	if cachedToken != "" {
+		sched, err := c.fetchWithToken(ctx, domain, cachedToken)
+		if err == nil {
+			return sched, cachedToken, nil
+		}
+		// token expired or invalid; fall through to full login
+	}
+	return c.loginAndFetch(ctx, domain, username, password)
+}
+
+// fetchWithToken GETs the ChildTransportInfo page using only the BPWebAuth
+// cookie. Returns an error if the server responds with a redirect (token
+// expired or unknown). Redirects are not followed so the 3xx can be detected
+// reliably.
+func (c *Client) fetchWithToken(ctx context.Context, domain, token string) (*state.Schedule, error) {
+	pageURL := fmt.Sprintf("https://%s/Subscriptions/ChildTransportInfo.aspx", domain)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Cookie", "BPWebAuth="+token)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; bpw-dispatch/1.0)")
+
+	// Don't follow redirects: a 3xx response means the token is invalid.
+	noRedirectClient := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Timeout:       c.HTTPClient.Timeout,
+		Transport:     c.HTTPClient.Transport,
+	}
+
+	resp, err := noRedirectClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode/100 == 3 {
+		return nil, fmt.Errorf("auth token expired (server returned %d %s)", resp.StatusCode, resp.Status)
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	c.dump("childtransportinfo.html", strings.NewReader(string(bodyBytes)))
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("parsing schedule page: %w", err)
+	}
+	return ParseSchedule(doc)
+}
+
+// loginAndFetch performs the full ASP.NET WebForms login, then parses the
+// ChildTransportInfo page returned after the login redirect. It returns the
+// schedule and the BPWebAuth token issued by the server for future reuse.
+func (c *Client) loginAndFetch(ctx context.Context, domain, username, password string) (*state.Schedule, string, error) {
 	loginURL := fmt.Sprintf(
-		"https://%s/Login?ReturnUrl=%%2fSubscriptions%%2fChildTransportInfo&LoginType=Subscriber&showParentPopup=False",
+		"https://%s/Login?ReturnUrl=%%2fSubscriptions%%2fChildTransportInfo.aspx&LoginType=Subscriber&showParentPopup=False",
 		domain,
 	)
 
 	doc, action, err := c.fetchForm(ctx, loginURL, "login-page.html")
 	if err != nil {
-		return nil, fmt.Errorf("fetching login page: %w", err)
+		return nil, "", fmt.Errorf("fetching login page: %w", err)
 	}
 
 	values, err := formValues(doc, username, password)
 	if err != nil {
-		return nil, fmt.Errorf("reading login form: %w", err)
+		return nil, "", fmt.Errorf("reading login form: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, action, strings.NewReader(values.Encode()))
 	if err != nil {
-		return nil, fmt.Errorf("building login request: %w", err)
+		return nil, "", fmt.Errorf("building login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; bpw-dispatch/1.0)")
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("submitting login: %w", err)
+		return nil, "", fmt.Errorf("submitting login: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("reading login response: %w", err)
+		return nil, "", fmt.Errorf("reading login response: %w", err)
 	}
 	c.dump("post-login.html", strings.NewReader(string(bodyBytes)))
 
 	finalURL := resp.Request.URL.String()
 	if !strings.Contains(finalURL, "ChildTransportInfo") {
-		return nil, fmt.Errorf(
+		return nil, "", fmt.Errorf(
 			"login did not reach ChildTransportInfo (ended at %s); check credentials, or the login form fields may have changed — rerun with -debug to inspect debug/login-page.html and debug/post-login.html",
 			finalURL,
 		)
 	}
 
+	// Extract the BPWebAuth token the server just issued.
+	var token string
+	domainURL, _ := url.Parse("https://" + domain)
+	for _, cookie := range c.HTTPClient.Jar.Cookies(domainURL) {
+		if cookie.Name == "BPWebAuth" {
+			token = cookie.Value
+			break
+		}
+	}
+
 	scheduleDoc, err := goquery.NewDocumentFromReader(strings.NewReader(string(bodyBytes)))
 	if err != nil {
-		return nil, fmt.Errorf("parsing schedule page: %w", err)
+		return nil, "", fmt.Errorf("parsing schedule page: %w", err)
 	}
-	return ParseSchedule(scheduleDoc)
+	sched, err := ParseSchedule(scheduleDoc)
+	return sched, token, err
 }
 
 // fetchForm GETs a page and returns its parsed document plus the resolved

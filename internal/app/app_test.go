@@ -17,12 +17,12 @@ type fakeScheduleFetcher struct {
 	calls    int
 }
 
-func (f *fakeScheduleFetcher) FetchSchedule(_ context.Context, _, _, _ string) (*state.Schedule, error) {
+func (f *fakeScheduleFetcher) FetchSchedule(_ context.Context, _, _, _, _ string) (*state.Schedule, string, error) {
 	f.calls++
 	if f.err != nil {
-		return nil, f.err
+		return nil, "", f.err
 	}
-	return f.schedule, nil
+	return f.schedule, "fake-token", nil
 }
 
 type fakeAlertsFetcher struct {
