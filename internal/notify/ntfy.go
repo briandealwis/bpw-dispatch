@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/briandealwis/bpw-dispatch/internal/config"
+	"github.com/briandealwis/bpw-dispatch/internal/logging"
 )
 
 // Ntfy sends messages via an ntfy.sh (or self-hosted ntfy) topic.
@@ -16,6 +17,9 @@ type Ntfy struct {
 	Server     string
 	Topic      string
 	HTTPClient *http.Client
+	// Log, when set, receives a line before and after each send, so a hung
+	// run can be traced to exactly which request never returned.
+	Log logging.Logger
 }
 
 // NewNtfy builds an Ntfy notifier from config, defaulting Server to
@@ -45,10 +49,14 @@ func (n *Ntfy) Send(ctx context.Context, msg Message) error {
 		req.Header.Set("X-Click", msg.ClickURL)
 	}
 
+	start := time.Now()
+	logging.Logf(n.Log, "ntfy: POST %s starting", url)
 	resp, err := n.HTTPClient.Do(req)
 	if err != nil {
+		logging.Logf(n.Log, "ntfy: POST %s failed after %s: %v", url, time.Since(start), err)
 		return fmt.Errorf("sending ntfy notification: %w", err)
 	}
+	logging.Logf(n.Log, "ntfy: POST %s -> %d in %s", url, resp.StatusCode, time.Since(start))
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))

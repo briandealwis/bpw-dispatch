@@ -32,6 +32,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 
+	"github.com/briandealwis/bpw-dispatch/internal/logging"
 	"github.com/briandealwis/bpw-dispatch/internal/state"
 )
 
@@ -42,6 +43,10 @@ type Client struct {
 	// troubleshooting login/scraping against the real site.
 	Debug    bool
 	DebugDir string
+	// Log, when set, receives a line before and after every HTTP request
+	// this Client makes — the "before" line lets a hung run be traced back
+	// to exactly which request never returned.
+	Log logging.Logger
 }
 
 // NewClient returns a Client with its own cookie jar (required to carry the
@@ -55,6 +60,22 @@ func NewClient() (*Client, error) {
 		HTTPClient: &http.Client{Jar: jar, Timeout: 30 * time.Second},
 		DebugDir:   "debug",
 	}, nil
+}
+
+// do performs req and logs a line before sending it and a line after it
+// returns (with status+duration, or the error). The "before" line is what
+// lets a hung run be traced to exactly which request is stuck: if a run
+// never logs the matching "after" line, that request is where it's hanging.
+func (c *Client) do(client *http.Client, req *http.Request) (*http.Response, error) {
+	start := time.Now()
+	logging.Logf(c.Log, "portal: %s %s starting", req.Method, req.URL)
+	resp, err := client.Do(req)
+	if err != nil {
+		logging.Logf(c.Log, "portal: %s %s failed after %s: %v", req.Method, req.URL, time.Since(start), err)
+		return nil, err
+	}
+	logging.Logf(c.Log, "portal: %s %s -> %d in %s", req.Method, req.URL, resp.StatusCode, time.Since(start))
+	return resp, nil
 }
 
 func (c *Client) dump(name string, r io.Reader) {
@@ -81,12 +102,14 @@ func (c *Client) dump(name string, r io.Reader) {
 // may equal cachedToken (if the cached token was still valid) or be a freshly
 // issued value (after a new login).
 func (c *Client) FetchSchedule(ctx context.Context, domain, username, password, cachedToken string) (*state.Schedule, string, error) {
+	logging.Logf(c.Log, "portal %s: FetchSchedule starting (cached token present: %v)", domain, cachedToken != "")
 	if cachedToken != "" {
 		sched, err := c.fetchWithToken(ctx, domain, cachedToken)
 		if err == nil {
+			logging.Logf(c.Log, "portal %s: cached token still valid, skipping login", domain)
 			return sched, cachedToken, nil
 		}
-		// token expired or invalid; fall through to full login
+		logging.Logf(c.Log, "portal %s: cached token rejected (%v), falling back to full login", domain, err)
 	}
 	return c.loginAndFetch(ctx, domain, username, password)
 }
@@ -112,7 +135,7 @@ func (c *Client) fetchWithToken(ctx context.Context, domain, token string) (*sta
 		Transport:     c.HTTPClient.Transport,
 	}
 
-	resp, err := noRedirectClient.Do(req)
+	resp, err := c.do(noRedirectClient, req)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +184,7 @@ func (c *Client) loginAndFetch(ctx context.Context, domain, username, password s
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; bpw-dispatch/1.0)")
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := c.do(c.HTTPClient, req)
 	if err != nil {
 		return nil, "", fmt.Errorf("submitting login: %w", err)
 	}
@@ -208,7 +231,7 @@ func (c *Client) fetchForm(ctx context.Context, pageURL, dumpName string) (*goqu
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; bpw-dispatch/1.0)")
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := c.do(c.HTTPClient, req)
 	if err != nil {
 		return nil, "", err
 	}

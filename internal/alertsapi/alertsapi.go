@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/briandealwis/bpw-dispatch/internal/logging"
 )
 
 // Alert is one row returned by the GetBusNotifications/GetSchoolNotifications
@@ -33,6 +35,9 @@ type notificationsResponse struct {
 // Client fetches alerts from a BusPlannerWeb domain.
 type Client struct {
 	HTTPClient *http.Client
+	// Log, when set, receives a line before and after each request, so a
+	// hung run can be traced to exactly which request never returned.
+	Log logging.Logger
 }
 
 // NewClient returns a Client with a sane request timeout.
@@ -70,10 +75,14 @@ func (c *Client) post(ctx context.Context, domain, endpoint string) ([]Alert, er
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; bpw-dispatch/1.0)")
 
+	start := time.Now()
+	logging.Logf(c.Log, "alerts: POST %s starting", url)
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
+		logging.Logf(c.Log, "alerts: POST %s failed after %s: %v", url, time.Since(start), err)
 		return nil, fmt.Errorf("requesting %s: %w", endpoint, err)
 	}
+	logging.Logf(c.Log, "alerts: POST %s -> %d in %s", url, resp.StatusCode, time.Since(start))
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 512))

@@ -12,6 +12,7 @@ import (
 
 	"github.com/briandealwis/bpw-dispatch/internal/alertsapi"
 	"github.com/briandealwis/bpw-dispatch/internal/config"
+	"github.com/briandealwis/bpw-dispatch/internal/logging"
 	"github.com/briandealwis/bpw-dispatch/internal/notify"
 	"github.com/briandealwis/bpw-dispatch/internal/portal"
 	"github.com/briandealwis/bpw-dispatch/internal/session"
@@ -44,6 +45,11 @@ type App struct {
 	Portal    ScheduleFetcher
 	Notifiers map[string]notify.Notifier
 	Now       func() time.Time
+	// Log, when set, receives a line at each step of Run — which kid is
+	// being processed, whether the schedule/alerts need checking, and what
+	// was (or wasn't) sent — so a run that hangs or takes too long can be
+	// traced to where it got stuck.
+	Log logging.Logger
 }
 
 // New builds an App from config and state, constructing the alerts/portal
@@ -74,13 +80,21 @@ func (a *App) Run(ctx context.Context) error {
 	today := session.DateKey(now)
 	sess := session.Current(now)
 	weekday := session.WeekdayName(now)
+	logging.Logf(a.Log, "run: starting for %s, session=%s, weekday=%s, %d kid(s)", today, sess, weekday, len(a.Config.Kids))
 
 	var errs []error
 	for _, kid := range a.Config.Kids {
-		if err := a.runKid(ctx, kid, today, sess, weekday); err != nil {
+		logging.Logf(a.Log, "kid %s: starting", kid.ID)
+		start := time.Now()
+		err := a.runKid(ctx, kid, today, sess, weekday)
+		if err != nil {
 			errs = append(errs, err)
+			logging.Logf(a.Log, "kid %s: finished with error after %s: %v", kid.ID, time.Since(start), err)
+		} else {
+			logging.Logf(a.Log, "kid %s: finished after %s", kid.ID, time.Since(start))
 		}
 	}
+	logging.Logf(a.Log, "run: done")
 	return errors.Join(errs...)
 }
 
@@ -94,17 +108,23 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, today string, sess ses
 	var errs []error
 
 	if ks.ScheduleDate != today {
+		logging.Logf(a.Log, "kid %s: schedule not yet checked today, fetching", kid.ID)
 		newSched, newToken, err := a.Portal.FetchSchedule(ctx, kid.Portal.Domain, kid.Portal.Username, kid.Portal.Password, ks.AuthToken)
 		if err != nil {
+			logging.Logf(a.Log, "kid %s: schedule fetch failed: %v", kid.ID, err)
 			errs = append(errs, fmt.Errorf("kid %s: fetching schedule: %w", kid.ID, err))
 		} else {
+			logging.Logf(a.Log, "kid %s: schedule fetched", kid.ID)
 			if ks.Schedule != nil && !ks.Schedule.Equal(newSched) {
+				logging.Logf(a.Log, "kid %s: schedule changed, sending alert to %v", kid.ID, kid.Notifiers)
 				a.send(ctx, kid.Notifiers, formatScheduleChange(kid, ks.Schedule, newSched), portalScheduleURL(kid.Portal.Domain), &errs)
 			}
 			ks.Schedule = newSched
 			ks.ScheduleDate = today
 			ks.AuthToken = newToken
 		}
+	} else {
+		logging.Logf(a.Log, "kid %s: schedule already checked today, skipping", kid.ID)
 	}
 
 	// Discard alert-tracking state from a previous day or a previous
@@ -114,10 +134,12 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, today string, sess ses
 	}
 
 	if !kid.SessionActive(string(sess), weekday) {
+		logging.Logf(a.Log, "kid %s: session %s not active on %s, skipping alerts check", kid.ID, sess, weekday)
 		return errors.Join(errs...)
 	}
 	notifierNames := kid.ResolveNotifiers(string(sess), weekday)
 	if len(notifierNames) == 0 {
+		logging.Logf(a.Log, "kid %s: no notifiers resolved for session %s on %s, skipping alerts check", kid.ID, sess, weekday)
 		return errors.Join(errs...)
 	}
 
@@ -127,17 +149,23 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, today string, sess ses
 		busFilter = leg.Bus
 	}
 
+	logging.Logf(a.Log, "kid %s: checking alerts (bus filter=%q, school filter=%q)", kid.ID, busFilter, kid.AlertMatch.School)
 	alerts, err := a.Alerts.FetchAndMatch(ctx, kid.Portal.Domain, busFilter, kid.AlertMatch.School)
 	if err != nil {
+		logging.Logf(a.Log, "kid %s: alerts fetch failed: %v", kid.ID, err)
 		errs = append(errs, fmt.Errorf("kid %s: fetching alerts: %w", kid.ID, err))
 		return errors.Join(errs...)
 	}
+	logging.Logf(a.Log, "kid %s: got %d matching alert(s)", kid.ID, len(alerts))
 
 	msg := formatAlertMessage(kid, leg, alerts)
 	if !ks.Session.Sent || msg != ks.Session.LastMessage {
+		logging.Logf(a.Log, "kid %s: message changed, sending to %v", kid.ID, notifierNames)
 		a.send(ctx, notifierNames, msg, portalAlertsURL(kid.Portal.Domain), &errs)
 		ks.Session.LastMessage = msg
 		ks.Session.Sent = true
+	} else {
+		logging.Logf(a.Log, "kid %s: message unchanged, not sending", kid.ID)
 	}
 
 	return errors.Join(errs...)
@@ -151,8 +179,12 @@ func (a *App) send(ctx context.Context, notifierNames []string, text, clickURL s
 			*errs = append(*errs, fmt.Errorf("notifier %q not found", name))
 			continue
 		}
+		logging.Logf(a.Log, "notifier %s: sending starting", name)
 		if err := n.Send(ctx, msg); err != nil {
+			logging.Logf(a.Log, "notifier %s: sending failed: %v", name, err)
 			*errs = append(*errs, fmt.Errorf("sending via %q: %w", name, err))
+		} else {
+			logging.Logf(a.Log, "notifier %s: sent", name)
 		}
 	}
 }

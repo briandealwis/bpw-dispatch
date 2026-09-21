@@ -111,6 +111,11 @@ Flags:
 - `-debug` — dump fetched portal HTML to `-debug-dir` (default `debug/`),
   for troubleshooting if login or schedule-scraping ever breaks against a
   real site (e.g. after a BusPlannerWeb redesign)
+- `-verbose` — log every step to stderr with timestamps: which kid is being
+  processed, whether the schedule/alerts need checking, and a line before
+  *and* after every network call (portal login, alerts API, ntfy send) with
+  its duration. Use this if a run seems to hang or take too long — the last
+  "starting" line with no matching result line is exactly where it's stuck.
 
 ### Cron
 

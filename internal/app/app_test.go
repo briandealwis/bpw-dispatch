@@ -1,12 +1,15 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/briandealwis/bpw-dispatch/internal/alertsapi"
 	"github.com/briandealwis/bpw-dispatch/internal/config"
+	"github.com/briandealwis/bpw-dispatch/internal/logging"
 	"github.com/briandealwis/bpw-dispatch/internal/notify"
 	"github.com/briandealwis/bpw-dispatch/internal/state"
 )
@@ -345,3 +348,40 @@ var errPortalDown = fakeErr("portal unreachable")
 type fakeErr string
 
 func (e fakeErr) Error() string { return string(e) }
+
+func TestRun_VerboseLog_TracesEachStep(t *testing.T) {
+	var buf bytes.Buffer
+	a, _, _, _, _ := newTestApp(t, testKid(), schedule140(), nil, wed9am)
+	a.Log = logging.New(&buf)
+
+	if err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{
+		"run: starting",
+		"kid kid1: starting",
+		"kid kid1: schedule not yet checked today, fetching",
+		"kid kid1: schedule fetched",
+		"kid kid1: checking alerts",
+		"kid kid1: message changed, sending",
+		"notifier main: sending starting",
+		"notifier main: sent",
+		"kid kid1: finished after",
+		"run: done",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("verbose log missing %q; full log:\n%s", want, out)
+		}
+	}
+}
+
+func TestRun_NoLog_DoesNotPanic(t *testing.T) {
+	// App.Log is left nil (the zero value), as it is whenever -verbose is
+	// not passed: Run must not panic just because nothing is listening.
+	a, _, _, _, _ := newTestApp(t, testKid(), schedule140(), nil, wed9am)
+	if err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
