@@ -6,7 +6,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
+
+func TestNewClient_RequestTimeout(t *testing.T) {
+	c := NewClient()
+	if c.HTTPClient.Timeout != 15*time.Second {
+		t.Errorf("HTTPClient.Timeout = %s, want 15s", c.HTTPClient.Timeout)
+	}
+}
 
 func TestMatchAlerts(t *testing.T) {
 	alerts := []Alert{

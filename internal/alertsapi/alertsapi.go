@@ -40,9 +40,15 @@ type Client struct {
 	Log logging.Logger
 }
 
+// requestTimeout bounds every request this package makes, so a slow or
+// unresponsive Alerts API fails fast enough that its failure can be
+// reported (see app.formatStatusMessage) rather than the whole run
+// stalling past the next cron tick.
+const requestTimeout = 15 * time.Second
+
 // NewClient returns a Client with a sane request timeout.
 func NewClient() *Client {
-	return &Client{HTTPClient: &http.Client{Timeout: 20 * time.Second}}
+	return &Client{HTTPClient: &http.Client{Timeout: requestTimeout}}
 }
 
 // endpoint names, relative to https://<domain>/Alerts.aspx/

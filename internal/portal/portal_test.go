@@ -4,9 +4,20 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
+
+func TestNewClient_RequestTimeout(t *testing.T) {
+	c, err := NewClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.HTTPClient.Timeout != 15*time.Second {
+		t.Errorf("HTTPClient.Timeout = %s, want 15s", c.HTTPClient.Timeout)
+	}
+}
 
 func loadDoc(t *testing.T, path string) *goquery.Document {
 	t.Helper()

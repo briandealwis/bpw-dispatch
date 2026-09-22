@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -25,18 +26,48 @@ func busLabel(kid config.Kid, leg *state.Leg) string {
 	return "bus"
 }
 
-// formatAlertMessage builds the per-session alert text. It deliberately
-// omits the kid's name — only school and bus identify the message.
-func formatAlertMessage(kid config.Kid, leg *state.Leg, alerts []alertsapi.Alert) string {
-	status := "Operating as scheduled"
-	if len(alerts) > 0 {
+// formatStatusMessage builds the per-session status text sent to
+// notifiers. It deliberately omits the kid's name — only school and bus
+// identify the message.
+//
+// alertsErr, when non-nil, means the Alerts API call itself failed (e.g.
+// timed out) — rather than silently skipping the notification in that
+// case, the failure is reported as the status so a broken check doesn't
+// look identical to no news at all. scheduleErr, when non-nil, means
+// today's schedule refresh failed this run; it's appended as a side note
+// so it doesn't get lost even though the schedule check retries silently
+// on its own every run until it succeeds.
+func formatStatusMessage(kid config.Kid, leg *state.Leg, alerts []alertsapi.Alert, alertsErr, scheduleErr error) string {
+	var status string
+	switch {
+	case alertsErr != nil:
+		status = fmt.Sprintf("Unable to check bus status (%s)", describeErr(alertsErr))
+	case len(alerts) > 0:
 		parts := make([]string, 0, len(alerts))
 		for _, al := range alerts {
 			parts = append(parts, al.Action)
 		}
 		status = strings.Join(parts, "; ")
+	default:
+		status = "Operating as scheduled"
 	}
-	return fmt.Sprintf("%s, %s: %s", kid.School, busLabel(kid, leg), status)
+
+	msg := fmt.Sprintf("%s, %s: %s", kid.School, busLabel(kid, leg), status)
+	if scheduleErr != nil {
+		msg += fmt.Sprintf(" [could not refresh today's schedule: %s]", describeErr(scheduleErr))
+	}
+	return msg
+}
+
+// describeErr reports network timeouts as a short, readable "timed out"
+// rather than the raw (often URL-containing) Go error text, which is both
+// clearer in a phone notification and doesn't leak request URLs.
+func describeErr(err error) string {
+	var te interface{ Timeout() bool }
+	if errors.As(err, &te) && te.Timeout() {
+		return "timed out"
+	}
+	return err.Error()
 }
 
 // formatScheduleChange builds the text sent when a kid's scraped schedule

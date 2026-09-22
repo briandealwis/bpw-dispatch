@@ -23,6 +23,13 @@ Each run:
    `X-Click` action) to the relevant portal page for details: the Alerts
    page for bus-status messages, the ChildTransportInfo page for
    schedule-change messages. Tapping the notification opens it directly.
+6. Every network call (portal login, alerts API, ntfy) has a **15s
+   timeout**. If the Alerts API check itself fails — timeout or otherwise —
+   that failure is reported as the status message (e.g. `Example School,
+   140: Unable to check bus status (timed out)`) instead of silently
+   sending nothing; a schedule-refresh failure is appended as a note on
+   whatever status message goes out that run. Either way you find out a
+   check is broken instead of assuming "no news" meant "all clear".
 
 ## Building
 

@@ -2,11 +2,14 @@ package portal
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"testing"
+	"time"
 )
 
 const testBPWebAuthToken = "test-bpwebauth-token-value"
@@ -181,6 +184,52 @@ func TestFetchSchedule_ExpiredTokenFallsBackToLogin(t *testing.T) {
 	}
 	if token != testBPWebAuthToken {
 		t.Errorf("expected fresh token after login fallback, got %q", token)
+	}
+}
+
+// TestFetchSchedule_TimesOutRatherThanHanging verifies that a portal which
+// accepts a connection but never responds (as opposed to refusing it, or a
+// slow-but-eventually-responding server) doesn't hang the run forever: the
+// configured HTTPClient.Timeout still applies and FetchSchedule returns a
+// timeout error. The Timeout is overridden to a short value here purely so
+// this test doesn't take the real 15s (NewClient's default) to run; the
+// mechanism under test is the same either way.
+func TestFetchSchedule_TimesOutRatherThanHanging(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn // accept but never write a response
+		}
+	}()
+
+	client, err := NewClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.HTTPClient.Timeout = 200 * time.Millisecond
+	client.HTTPClient.Transport = rewriteHTTPSTransport{target: "http://" + ln.Addr().String()}
+
+	start := time.Now()
+	_, _, err = client.FetchSchedule(context.Background(), "example.com", "u", "p", "")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected a timeout error from a portal that never responds")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("FetchSchedule took %s; the configured Timeout doesn't seem to be applied", elapsed)
+	}
+	var te interface{ Timeout() bool }
+	if !errors.As(err, &te) || !te.Timeout() {
+		t.Errorf("error %v does not report itself as a timeout", err)
 	}
 }
 

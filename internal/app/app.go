@@ -106,12 +106,14 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, today string, sess ses
 	}
 
 	var errs []error
+	var scheduleErr error
 
 	if ks.ScheduleDate != today {
 		logging.Logf(a.Log, "kid %s: schedule not yet checked today, fetching", kid.ID)
 		newSched, newToken, err := a.Portal.FetchSchedule(ctx, kid.Portal.Domain, kid.Portal.Username, kid.Portal.Password, ks.AuthToken)
 		if err != nil {
 			logging.Logf(a.Log, "kid %s: schedule fetch failed: %v", kid.ID, err)
+			scheduleErr = err
 			errs = append(errs, fmt.Errorf("kid %s: fetching schedule: %w", kid.ID, err))
 		} else {
 			logging.Logf(a.Log, "kid %s: schedule fetched", kid.ID)
@@ -150,15 +152,19 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, today string, sess ses
 	}
 
 	logging.Logf(a.Log, "kid %s: checking alerts (bus filter=%q, school filter=%q)", kid.ID, busFilter, kid.AlertMatch.School)
-	alerts, err := a.Alerts.FetchAndMatch(ctx, kid.Portal.Domain, busFilter, kid.AlertMatch.School)
-	if err != nil {
-		logging.Logf(a.Log, "kid %s: alerts fetch failed: %v", kid.ID, err)
-		errs = append(errs, fmt.Errorf("kid %s: fetching alerts: %w", kid.ID, err))
-		return errors.Join(errs...)
+	alerts, alertsErr := a.Alerts.FetchAndMatch(ctx, kid.Portal.Domain, busFilter, kid.AlertMatch.School)
+	if alertsErr != nil {
+		// Deliberately don't return here: a failed check should still be
+		// reported to notifiers (via formatStatusMessage below) rather than
+		// leaving the user with no message at all and no way to tell a
+		// silent failure from "nothing to report".
+		logging.Logf(a.Log, "kid %s: alerts fetch failed: %v", kid.ID, alertsErr)
+		errs = append(errs, fmt.Errorf("kid %s: fetching alerts: %w", kid.ID, alertsErr))
+	} else {
+		logging.Logf(a.Log, "kid %s: got %d matching alert(s)", kid.ID, len(alerts))
 	}
-	logging.Logf(a.Log, "kid %s: got %d matching alert(s)", kid.ID, len(alerts))
 
-	msg := formatAlertMessage(kid, leg, alerts)
+	msg := formatStatusMessage(kid, leg, alerts, alertsErr, scheduleErr)
 	if !ks.Session.Sent || msg != ks.Session.LastMessage {
 		logging.Logf(a.Log, "kid %s: message changed, sending to %v", kid.ID, notifierNames)
 		a.send(ctx, notifierNames, msg, portalAlertsURL(kid.Portal.Domain), &errs)

@@ -49,6 +49,12 @@ type Client struct {
 	Log logging.Logger
 }
 
+// requestTimeout bounds every HTTP request this package makes, so a slow or
+// unresponsive portal fails fast enough that its failure can be reported
+// (see formatStatusMessage) rather than the whole run stalling past the
+// next cron tick.
+const requestTimeout = 15 * time.Second
+
 // NewClient returns a Client with its own cookie jar (required to carry the
 // login session from the login POST to the ChildTransportInfo GET).
 func NewClient() (*Client, error) {
@@ -57,7 +63,7 @@ func NewClient() (*Client, error) {
 		return nil, fmt.Errorf("creating cookie jar: %w", err)
 	}
 	return &Client{
-		HTTPClient: &http.Client{Jar: jar, Timeout: 30 * time.Second},
+		HTTPClient: &http.Client{Jar: jar, Timeout: requestTimeout},
 		DebugDir:   "debug",
 	}, nil
 }

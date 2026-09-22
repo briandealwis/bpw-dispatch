@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/briandealwis/bpw-dispatch/internal/config"
 )
@@ -71,6 +72,13 @@ func TestNewNtfy_DefaultServer(t *testing.T) {
 	n := NewNtfy(config.Notifier{Topic: "t"})
 	if n.Server != "https://ntfy.sh" {
 		t.Errorf("default server = %q, want https://ntfy.sh", n.Server)
+	}
+}
+
+func TestNewNtfy_RequestTimeout(t *testing.T) {
+	n := NewNtfy(config.Notifier{Topic: "t"})
+	if n.HTTPClient.Timeout != 15*time.Second {
+		t.Errorf("HTTPClient.Timeout = %s, want 15s", n.HTTPClient.Timeout)
 	}
 }
 

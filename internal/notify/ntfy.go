@@ -22,6 +22,10 @@ type Ntfy struct {
 	Log logging.Logger
 }
 
+// requestTimeout bounds every send, so a slow or unresponsive ntfy server
+// fails fast rather than stalling the run past the next cron tick.
+const requestTimeout = 15 * time.Second
+
 // NewNtfy builds an Ntfy notifier from config, defaulting Server to
 // https://ntfy.sh when unset.
 func NewNtfy(cfg config.Notifier) *Ntfy {
@@ -32,7 +36,7 @@ func NewNtfy(cfg config.Notifier) *Ntfy {
 	return &Ntfy{
 		Server:     server,
 		Topic:      cfg.Topic,
-		HTTPClient: &http.Client{Timeout: 15 * time.Second},
+		HTTPClient: &http.Client{Timeout: requestTimeout},
 	}
 }
 
