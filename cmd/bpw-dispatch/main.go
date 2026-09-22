@@ -5,8 +5,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -25,6 +27,7 @@ func main() {
 	debug := flag.Bool("debug", false, "dump fetched portal HTML for troubleshooting login/scraping")
 	debugDir := flag.String("debug-dir", "debug", "directory for -debug HTML dumps")
 	verbose := flag.Bool("verbose", false, "log every step and network call to stderr, with timestamps — use this to see where a run is stuck or slow")
+	insecure := flag.Bool("insecure", false, "skip TLS certificate verification (use when the portal's cert is expired)")
 	flag.Parse()
 
 	verboseLog := logging.Discard
@@ -57,6 +60,17 @@ func main() {
 		log.Fatalf("initializing: %v", err)
 	}
 	a.Log = verboseLog
+	if *insecure {
+		insecureTransport := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		}
+		if pc, ok := a.Portal.(*portal.Client); ok {
+			pc.HTTPClient.Transport = insecureTransport
+		}
+		if ac, ok := a.Alerts.(*alertsapi.Client); ok {
+			ac.HTTPClient.Transport = insecureTransport
+		}
+	}
 	if pc, ok := a.Portal.(*portal.Client); ok {
 		pc.Debug = *debug
 		pc.DebugDir = *debugDir
