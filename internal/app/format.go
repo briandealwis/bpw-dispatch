@@ -1,9 +1,13 @@
 package app
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
+	"syscall"
 
 	"github.com/briandealwis/bpw-dispatch/internal/alertsapi"
 	"github.com/briandealwis/bpw-dispatch/internal/config"
@@ -59,10 +63,38 @@ func formatStatusMessage(kid config.Kid, leg *state.Leg, alerts []alertsapi.Aler
 	return msg
 }
 
-// describeErr reports network timeouts as a short, readable "timed out"
-// rather than the raw (often URL-containing) Go error text, which is both
-// clearer in a phone notification and doesn't leak request URLs.
+// describeErr classifies a network error into a short, readable phrase
+// rather than the raw (often URL-containing) Go error text — clearer in a
+// phone notification, doesn't leak request URLs, and names the likely
+// cause (DNS, connection refused, TLS, or a generic timeout) so a repeat
+// failure's category is visible without needing -verbose.
+//
+// Checks are ordered most- to least-specific: a DNS failure is also a
+// net.Error whose Timeout() may be true, so it's matched first or it'd be
+// reported as a bare "timed out" instead of naming the DNS lookup.
 func describeErr(err error) string {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		switch {
+		case dnsErr.IsTimeout:
+			return fmt.Sprintf("DNS lookup for %s timed out", dnsErr.Name)
+		case dnsErr.IsNotFound:
+			return fmt.Sprintf("DNS lookup for %s failed (no such host)", dnsErr.Name)
+		default:
+			return fmt.Sprintf("DNS lookup for %s failed (%s)", dnsErr.Name, dnsErr.Err)
+		}
+	}
+
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return "connection refused"
+	}
+
+	var certErr x509.UnknownAuthorityError
+	var tlsErr tls.RecordHeaderError
+	if errors.As(err, &certErr) || errors.As(err, &tlsErr) {
+		return "TLS handshake failed"
+	}
+
 	var te interface{ Timeout() bool }
 	if errors.As(err, &te) && te.Timeout() {
 		return "timed out"

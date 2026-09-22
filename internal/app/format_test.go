@@ -2,7 +2,12 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"net"
+	"net/url"
+	"syscall"
 	"testing"
 
 	"github.com/briandealwis/bpw-dispatch/internal/alertsapi"
@@ -91,8 +96,81 @@ func TestDescribeErr_Timeout(t *testing.T) {
 }
 
 func TestDescribeErr_NonTimeout(t *testing.T) {
-	if got := describeErr(errors.New("connection refused")); got != "connection refused" {
-		t.Errorf("got %q, want %q", got, "connection refused")
+	if got := describeErr(errors.New("some other failure")); got != "some other failure" {
+		t.Errorf("got %q, want %q", got, "some other failure")
+	}
+}
+
+// wrapAsClientErr mimics how net/http actually surfaces a low-level network
+// error from Client.Do: wrapped in a *url.Error carrying the request URL.
+// describeErr must unwrap through this the same way it would for a real
+// failed request, and must not let that URL leak into the returned text.
+func wrapAsClientErr(err error) error {
+	return &url.Error{Op: "Get", URL: "https://parent-with-secret-token.example.com/Login", Err: err}
+}
+
+func TestDescribeErr_DNSTimeout(t *testing.T) {
+	err := wrapAsClientErr(&net.DNSError{Err: "i/o timeout", Name: "www.findmyschool.ca", IsTimeout: true})
+	want := "DNS lookup for www.findmyschool.ca timed out"
+	if got := describeErr(err); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDescribeErr_DNSNotFound(t *testing.T) {
+	err := wrapAsClientErr(&net.DNSError{Err: "no such host", Name: "typo.example.com", IsNotFound: true})
+	want := "DNS lookup for typo.example.com failed (no such host)"
+	if got := describeErr(err); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDescribeErr_DNSOtherFailure(t *testing.T) {
+	err := wrapAsClientErr(&net.DNSError{Err: "server misbehaving", Name: "www.findmyschool.ca"})
+	want := "DNS lookup for www.findmyschool.ca failed (server misbehaving)"
+	if got := describeErr(err); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDescribeErr_DNSTakesPrecedenceOverGenericTimeout(t *testing.T) {
+	// net.DNSError also implements Timeout() bool, so if the generic timeout
+	// check ran first this would come back as the less useful "timed out"
+	// instead of naming the DNS lookup.
+	err := wrapAsClientErr(&net.DNSError{Err: "i/o timeout", Name: "infobus.francobus.ca", IsTimeout: true})
+	if got := describeErr(err); got == "timed out" {
+		t.Errorf("DNS-specific detail was lost to the generic timeout branch: %q", got)
+	}
+}
+
+func TestDescribeErr_ConnectionRefused(t *testing.T) {
+	err := wrapAsClientErr(&net.OpError{Op: "dial", Err: syscall.ECONNREFUSED})
+	want := "connection refused"
+	if got := describeErr(err); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDescribeErr_TLSUntrustedCert(t *testing.T) {
+	err := wrapAsClientErr(x509.UnknownAuthorityError{})
+	want := "TLS handshake failed"
+	if got := describeErr(err); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDescribeErr_TLSRecordHeader(t *testing.T) {
+	err := wrapAsClientErr(tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"})
+	want := "TLS handshake failed"
+	if got := describeErr(err); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDescribeErr_NeverLeaksRequestURL(t *testing.T) {
+	err := wrapAsClientErr(&net.DNSError{Err: "i/o timeout", Name: "example.com", IsTimeout: true})
+	if got := describeErr(err); got == err.Error() {
+		t.Errorf("describeErr should not fall back to the raw (URL-containing) error text here: %q", got)
 	}
 }
 

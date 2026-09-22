@@ -25,11 +25,18 @@ Each run:
    schedule-change messages. Tapping the notification opens it directly.
 6. Every network call (portal login, alerts API, ntfy) has a **15s
    timeout**. If the Alerts API check itself fails — timeout or otherwise —
-   that failure is reported as the status message (e.g. `Example School,
-   140: Unable to check bus status (timed out)`) instead of silently
+   that failure is reported as the status message instead of silently
    sending nothing; a schedule-refresh failure is appended as a note on
    whatever status message goes out that run. Either way you find out a
-   check is broken instead of assuming "no news" meant "all clear".
+   check is broken instead of assuming "no news" meant "all clear". The
+   failure is classified so the message names the likely cause rather than
+   a generic timeout, e.g.:
+   - `Example School, 140: Unable to check bus status (DNS lookup for
+     www.findmyschool.ca timed out)`
+   - `Example School, 140: Unable to check bus status (connection refused)`
+   - `Example School, 140: Unable to check bus status (TLS handshake failed)`
+   - `Example School, 140: Unable to check bus status (timed out)` — a
+     generic fallback when none of the above apply
 
 ## Building
 
