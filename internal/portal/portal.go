@@ -33,6 +33,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 
 	"github.com/briandealwis/bpw-dispatch/internal/logging"
+	"github.com/briandealwis/bpw-dispatch/internal/retry"
 	"github.com/briandealwis/bpw-dispatch/internal/state"
 )
 
@@ -72,6 +73,10 @@ func NewClient() (*Client, error) {
 // returns (with status+duration, or the error). The "before" line is what
 // lets a hung run be traced to exactly which request is stuck: if a run
 // never logs the matching "after" line, that request is where it's hanging.
+//
+// A 5xx or 429 response is returned as a *retry.StatusError rather than
+// handed back for parsing, so an overloaded or down portal is reported (and
+// retried) as a server failure instead of a confusing "page didn't parse".
 func (c *Client) do(client *http.Client, req *http.Request) (*http.Response, error) {
 	start := time.Now()
 	logging.Logf(c.Log, "portal: %s %s starting", req.Method, req.URL)
@@ -81,6 +86,10 @@ func (c *Client) do(client *http.Client, req *http.Request) (*http.Response, err
 		return nil, err
 	}
 	logging.Logf(c.Log, "portal: %s %s -> %d in %s", req.Method, req.URL, resp.StatusCode, time.Since(start))
+	if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+		resp.Body.Close()
+		return nil, &retry.StatusError{Op: "portal " + req.Method + " " + req.URL.Path, StatusCode: resp.StatusCode}
+	}
 	return resp, nil
 }
 

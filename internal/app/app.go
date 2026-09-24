@@ -15,6 +15,7 @@ import (
 	"github.com/briandealwis/bpw-dispatch/internal/logging"
 	"github.com/briandealwis/bpw-dispatch/internal/notify"
 	"github.com/briandealwis/bpw-dispatch/internal/portal"
+	"github.com/briandealwis/bpw-dispatch/internal/retry"
 	"github.com/briandealwis/bpw-dispatch/internal/session"
 	"github.com/briandealwis/bpw-dispatch/internal/state"
 )
@@ -45,6 +46,9 @@ type App struct {
 	Portal    ScheduleFetcher
 	Notifiers map[string]notify.Notifier
 	Now       func() time.Time
+	// Retry governs retries of every network call (schedule fetch, alerts
+	// check, notifier send). The zero value makes a single attempt.
+	Retry retry.Policy
 	// Log, when set, receives a line at each step of Run — which kid is
 	// being processed, whether the schedule/alerts need checking, and what
 	// was (or wasn't) sent — so a run that hangs or takes too long can be
@@ -70,6 +74,7 @@ func New(cfg *config.Config, st *state.State) (*App, error) {
 		Portal:    portalClient,
 		Notifiers: notifiers,
 		Now:       time.Now,
+		Retry:     retry.Default,
 	}, nil
 }
 
@@ -86,7 +91,7 @@ func (a *App) Run(ctx context.Context) error {
 	for _, kid := range a.Config.Kids {
 		logging.Logf(a.Log, "kid %s: starting", kid.ID)
 		start := time.Now()
-		err := a.runKid(ctx, kid, today, sess, weekday)
+		err := a.runKid(ctx, kid, now, today, sess, weekday)
 		if err != nil {
 			errs = append(errs, err)
 			logging.Logf(a.Log, "kid %s: finished with error after %s: %v", kid.ID, time.Since(start), err)
@@ -98,29 +103,51 @@ func (a *App) Run(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func (a *App) runKid(ctx context.Context, kid config.Kid, today string, sess session.Session, weekday string) error {
+// runKid refreshes one kid's schedule (at most once a day) and checks their
+// bus alerts for the current session.
+//
+// A failed check is sent to the error notifiers straight away, but the
+// kid's regular notifiers keep the result of the last successful check
+// until the check has been failing for longer than stale_after. That keeps
+// a flaky portal from producing a stream of error / "Operating as scheduled"
+// flip-flops on the main channel while still flagging a sustained outage.
+func (a *App) runKid(ctx context.Context, kid config.Kid, now time.Time, today string, sess session.Session, weekday string) error {
 	ks := a.State.Kids[kid.ID]
 	if ks == nil {
 		ks = &state.KidState{}
 		a.State.Kids[kid.ID] = ks
 	}
 
+	// A failure streak left over from a previous day (say, the last run
+	// yesterday afternoon failed) says nothing about today; drop it so this
+	// morning's first failure isn't treated as already stale.
+	ks.ScheduleFailure = dropIfBefore(ks.ScheduleFailure, today)
+	ks.AlertsFailure = dropIfBefore(ks.AlertsFailure, today)
+
 	var errs []error
-	var scheduleErr error
+	errNotifiers := a.Config.ErrorNotifiersFor(kid)
 
 	if ks.ScheduleDate != today {
 		logging.Logf(a.Log, "kid %s: schedule not yet checked today, fetching", kid.ID)
-		newSched, newToken, err := a.Portal.FetchSchedule(ctx, kid.Portal.Domain, kid.Portal.Username, kid.Portal.Password, ks.AuthToken)
+		var newSched *state.Schedule
+		var newToken string
+		err := a.withRetry(ctx, "kid "+kid.ID+": schedule fetch", func(ctx context.Context) error {
+			var err error
+			newSched, newToken, err = a.Portal.FetchSchedule(ctx, kid.Portal.Domain, kid.Portal.Username, kid.Portal.Password, ks.AuthToken)
+			return err
+		})
 		if err != nil {
 			logging.Logf(a.Log, "kid %s: schedule fetch failed: %v", kid.ID, err)
-			scheduleErr = err
 			errs = append(errs, fmt.Errorf("kid %s: fetching schedule: %w", kid.ID, err))
+			a.recordScheduleFailure(ctx, kid, ks, now, err, errNotifiers, &errs)
 		} else {
 			logging.Logf(a.Log, "kid %s: schedule fetched", kid.ID)
-			if ks.Schedule != nil && !ks.Schedule.Equal(newSched) {
+			changed := ks.Schedule != nil && !ks.Schedule.Equal(newSched)
+			if changed {
 				logging.Logf(a.Log, "kid %s: schedule changed, sending alert to %v", kid.ID, kid.Notifiers)
 				a.send(ctx, kid.Notifiers, formatScheduleChange(kid, ks.Schedule, newSched), portalScheduleURL(kid.Portal.Domain), &errs)
 			}
+			a.recordScheduleRecovery(ctx, kid, ks, changed, errNotifiers, &errs)
 			ks.Schedule = newSched
 			ks.ScheduleDate = today
 			ks.AuthToken = newToken
@@ -152,29 +179,139 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, today string, sess ses
 	}
 
 	logging.Logf(a.Log, "kid %s: checking alerts (bus filter=%q, school filter=%q)", kid.ID, busFilter, kid.AlertMatch.School)
-	alerts, alertsErr := a.Alerts.FetchAndMatch(ctx, kid.Portal.Domain, busFilter, kid.AlertMatch.School)
-	if alertsErr != nil {
-		// Deliberately don't return here: a failed check should still be
-		// reported to notifiers (via formatStatusMessage below) rather than
-		// leaving the user with no message at all and no way to tell a
-		// silent failure from "nothing to report".
-		logging.Logf(a.Log, "kid %s: alerts fetch failed: %v", kid.ID, alertsErr)
-		errs = append(errs, fmt.Errorf("kid %s: fetching alerts: %w", kid.ID, alertsErr))
-	} else {
-		logging.Logf(a.Log, "kid %s: got %d matching alert(s)", kid.ID, len(alerts))
+	var alerts []alertsapi.Alert
+	err := a.withRetry(ctx, "kid "+kid.ID+": alerts check", func(ctx context.Context) error {
+		var err error
+		alerts, err = a.Alerts.FetchAndMatch(ctx, kid.Portal.Domain, busFilter, kid.AlertMatch.School)
+		return err
+	})
+	if err != nil {
+		logging.Logf(a.Log, "kid %s: alerts fetch failed: %v", kid.ID, err)
+		errs = append(errs, fmt.Errorf("kid %s: fetching alerts: %w", kid.ID, err))
+		a.recordAlertsFailure(ctx, kid, ks, leg, now, err, errNotifiers, notifierNames, &errs)
+		return errors.Join(errs...)
 	}
+	logging.Logf(a.Log, "kid %s: got %d matching alert(s)", kid.ID, len(alerts))
+	a.recordAlertsRecovery(ctx, kid, ks, leg, errNotifiers, &errs)
 
-	msg := formatStatusMessage(kid, leg, alerts, alertsErr, scheduleErr)
-	if !ks.Session.Sent || msg != ks.Session.LastMessage {
+	msg := formatStatusMessage(kid, leg, alerts)
+	if !ks.Session.Sent || ks.Session.Failing || msg != ks.Session.LastMessage {
 		logging.Logf(a.Log, "kid %s: message changed, sending to %v", kid.ID, notifierNames)
 		a.send(ctx, notifierNames, msg, portalAlertsURL(kid.Portal.Domain), &errs)
 		ks.Session.LastMessage = msg
 		ks.Session.Sent = true
+		ks.Session.Failing = false
 	} else {
 		logging.Logf(a.Log, "kid %s: message unchanged, not sending", kid.ID)
 	}
 
 	return errors.Join(errs...)
+}
+
+// recordScheduleFailure reports a failed schedule refresh to the error
+// notifiers (unless it's the same failure already reported), and to the
+// kid's regular notifiers once, if it has been failing for longer than
+// stale_after. The previously fetched schedule is kept as is.
+func (a *App) recordScheduleFailure(ctx context.Context, kid config.Kid, ks *state.KidState, now time.Time, err error, errNotifiers []string, errs *[]error) {
+	f := ks.ScheduleFailure
+	if f == nil {
+		f = &state.Failure{Since: now}
+		ks.ScheduleFailure = f
+	}
+	url := portalScheduleURL(kid.Portal.Domain)
+	if msg := formatScheduleError(kid, err); msg != f.LastError {
+		logging.Logf(a.Log, "kid %s: reporting schedule failure to error notifiers %v", kid.ID, errNotifiers)
+		a.send(ctx, errNotifiers, msg, url, errs)
+		f.LastError = msg
+	}
+	if f.MainNotified {
+		return
+	}
+	if failing := now.Sub(f.Since); failing < a.Config.StaleAfter {
+		logging.Logf(a.Log, "kid %s: schedule refresh failing for %s (< %s), not telling regular notifiers yet", kid.ID, failing, a.Config.StaleAfter)
+		return
+	}
+	logging.Logf(a.Log, "kid %s: schedule refresh failing since %s, telling %v", kid.ID, f.Since.Format("15:04"), kid.Notifiers)
+	a.send(ctx, kid.Notifiers, formatScheduleStale(kid, f.Since, err), url, errs)
+	f.MainNotified = true
+}
+
+// recordScheduleRecovery ends a schedule failure streak, telling the error
+// notifiers, and the regular notifiers too if they were told about the
+// failure (unless a schedule-change alert has just gone out, which already
+// shows the refresh worked).
+func (a *App) recordScheduleRecovery(ctx context.Context, kid config.Kid, ks *state.KidState, changed bool, errNotifiers []string, errs *[]error) {
+	f := ks.ScheduleFailure
+	if f == nil {
+		return
+	}
+	ks.ScheduleFailure = nil
+	url := portalScheduleURL(kid.Portal.Domain)
+	msg := formatScheduleRecovered(kid)
+	if f.LastError != "" {
+		a.send(ctx, errNotifiers, msg, url, errs)
+	}
+	if f.MainNotified && !changed {
+		a.send(ctx, kid.Notifiers, msg+" (no changes)", url, errs)
+	}
+}
+
+// recordAlertsFailure reports a failed alerts check to the error notifiers
+// (unless it's the same failure already reported). The session's regular
+// notifiers keep the last successful status until the check has been
+// failing for longer than stale_after, at which point they're told once.
+func (a *App) recordAlertsFailure(ctx context.Context, kid config.Kid, ks *state.KidState, leg *state.Leg, now time.Time, err error, errNotifiers, notifierNames []string, errs *[]error) {
+	f := ks.AlertsFailure
+	if f == nil {
+		f = &state.Failure{Since: now}
+		ks.AlertsFailure = f
+	}
+	url := portalAlertsURL(kid.Portal.Domain)
+	if msg := formatAlertsError(kid, leg, err); msg != f.LastError {
+		logging.Logf(a.Log, "kid %s: reporting alerts failure to error notifiers %v", kid.ID, errNotifiers)
+		a.send(ctx, errNotifiers, msg, url, errs)
+		f.LastError = msg
+	}
+	if ks.Session.Failing {
+		return
+	}
+	if failing := now.Sub(f.Since); failing < a.Config.StaleAfter {
+		logging.Logf(a.Log, "kid %s: alerts check failing for %s (< %s), keeping last status %q", kid.ID, failing, a.Config.StaleAfter, ks.Session.LastMessage)
+		return
+	}
+	msg := formatAlertsStale(kid, leg, f.Since, err)
+	logging.Logf(a.Log, "kid %s: alerts check failing since %s, telling %v", kid.ID, f.Since.Format("15:04"), notifierNames)
+	a.send(ctx, notifierNames, msg, url, errs)
+	ks.Session.LastMessage = msg
+	ks.Session.Sent = true
+	ks.Session.Failing = true
+}
+
+// recordAlertsRecovery ends an alerts failure streak, telling the error
+// notifiers if they'd been told about it. The regular notifiers hear about
+// recovery via the normal status message (sent because Session.Failing is
+// set) only if they'd been told about the failure.
+func (a *App) recordAlertsRecovery(ctx context.Context, kid config.Kid, ks *state.KidState, leg *state.Leg, errNotifiers []string, errs *[]error) {
+	f := ks.AlertsFailure
+	if f == nil {
+		return
+	}
+	ks.AlertsFailure = nil
+	if f.LastError != "" {
+		a.send(ctx, errNotifiers, formatAlertsRecovered(kid, leg), portalAlertsURL(kid.Portal.Domain), errs)
+	}
+}
+
+// dropIfBefore discards a failure streak that started before today.
+func dropIfBefore(f *state.Failure, today string) *state.Failure {
+	if f != nil && session.DateKey(f.Since) != today {
+		return nil
+	}
+	return f
+}
+
+func (a *App) withRetry(ctx context.Context, name string, op func(context.Context) error) error {
+	return retry.Do(ctx, a.Retry, a.Log, name, op)
 }
 
 func (a *App) send(ctx context.Context, notifierNames []string, text, clickURL string, errs *[]error) {
@@ -186,7 +323,10 @@ func (a *App) send(ctx context.Context, notifierNames []string, text, clickURL s
 			continue
 		}
 		logging.Logf(a.Log, "notifier %s: sending starting", name)
-		if err := n.Send(ctx, msg); err != nil {
+		err := a.withRetry(ctx, "notifier "+name, func(ctx context.Context) error {
+			return n.Send(ctx, msg)
+		})
+		if err != nil {
 			logging.Logf(a.Log, "notifier %s: sending failed: %v", name, err)
 			*errs = append(*errs, fmt.Errorf("sending via %q: %w", name, err))
 		} else {

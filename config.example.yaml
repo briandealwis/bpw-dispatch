@@ -6,6 +6,16 @@
 # run from (set an absolute path if that's not guaranteed, e.g. under cron).
 state_file: state.json
 
+# How long a check (schedule refresh or bus alerts) must keep failing
+# before the kid's regular notifiers are told. Until then, failures go only
+# to error_notifiers and the regular notifiers keep the last good result.
+stale_after: 15m
+
+# Where every failed check is reported (once per distinct error, plus a
+# "recovered" message). A kid can override this with its own
+# error_notifiers. Leave unset to only log failures.
+error_notifiers: [ntfy-errors]
+
 notifiers:
   ntfy-parents:
     type: ntfy
@@ -13,6 +23,9 @@ notifiers:
   ntfy-grandma:
     type: ntfy
     topic: bpw-dispatch-changeme2
+  ntfy-errors:
+    type: ntfy
+    topic: bpw-dispatch-changeme-errors
 
 kids:
   - id: kid1

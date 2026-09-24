@@ -3,10 +3,13 @@ package alertsapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/briandealwis/bpw-dispatch/internal/retry"
 )
 
 func TestNewClient_RequestTimeout(t *testing.T) {
@@ -91,8 +94,13 @@ func TestFetchBusNotifications_HTTPError(t *testing.T) {
 	domain := srv.URL[len("http://"):]
 	client.HTTPClient.Transport = &schemeRewriteTransport{scheme: "http"}
 
-	if _, err := client.FetchBusNotifications(context.Background(), domain); err == nil {
-		t.Fatal("expected an error for a non-200 response")
+	_, err := client.FetchBusNotifications(context.Background(), domain)
+	var se *retry.StatusError
+	if !errors.As(err, &se) || se.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("err = %v, want a *retry.StatusError with status 500", err)
+	}
+	if !retry.IsTransient(err) {
+		t.Error("a 500 from the alerts API should be treated as transient (retryable)")
 	}
 }
 

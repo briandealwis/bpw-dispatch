@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/briandealwis/bpw-dispatch/internal/config"
+	"github.com/briandealwis/bpw-dispatch/internal/retry"
 )
 
 func TestNtfy_Send(t *testing.T) {
@@ -63,8 +65,13 @@ func TestNtfy_Send_HTTPError(t *testing.T) {
 	defer srv.Close()
 
 	n := NewNtfy(config.Notifier{Server: srv.URL, Topic: "t"})
-	if err := n.Send(context.Background(), Message{Text: "hi"}); err == nil {
-		t.Fatal("expected an error for a non-2xx response")
+	err := n.Send(context.Background(), Message{Text: "hi"})
+	var se *retry.StatusError
+	if !errors.As(err, &se) || se.StatusCode != http.StatusForbidden {
+		t.Fatalf("err = %v, want a *retry.StatusError with status 403", err)
+	}
+	if retry.IsTransient(err) {
+		t.Error("a 403 from ntfy won't fix itself and shouldn't be retried")
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/briandealwis/bpw-dispatch/internal/retry"
 )
 
 const testBPWebAuthToken = "test-bpwebauth-token-value"
@@ -230,6 +232,28 @@ func TestFetchSchedule_TimesOutRatherThanHanging(t *testing.T) {
 	var te interface{ Timeout() bool }
 	if !errors.As(err, &te) || !te.Timeout() {
 		t.Errorf("error %v does not report itself as a timeout", err)
+	}
+}
+
+// TestFetchSchedule_ServerErrorIsStatusError verifies that a portal returning
+// a 5xx (e.g. while it's overloaded or down for maintenance) is reported as
+// a retryable server error rather than handed on to the login/schedule
+// parsers, where it would surface as a misleading "page didn't parse".
+func TestFetchSchedule_ServerErrorIsStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "<html>Service Unavailable</html>", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv)
+	_, _, err := client.FetchSchedule(context.Background(), srv.URL[len("http://"):], "u", "p", "")
+
+	var se *retry.StatusError
+	if !errors.As(err, &se) || se.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("err = %v, want a *retry.StatusError with status 503", err)
+	}
+	if !retry.IsTransient(err) {
+		t.Error("a 503 from the portal should be treated as transient (retryable)")
 	}
 }
 

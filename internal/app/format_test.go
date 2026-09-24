@@ -5,20 +5,23 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/briandealwis/bpw-dispatch/internal/alertsapi"
 	"github.com/briandealwis/bpw-dispatch/internal/config"
+	"github.com/briandealwis/bpw-dispatch/internal/retry"
 	"github.com/briandealwis/bpw-dispatch/internal/state"
 )
 
 func TestFormatStatusMessage_NoAlerts(t *testing.T) {
 	kid := config.Kid{School: "Example School"}
 	leg := &state.Leg{Bus: "140"}
-	got := formatStatusMessage(kid, leg, nil, nil, nil)
+	got := formatStatusMessage(kid, leg, nil)
 	want := "Example School, 140: Operating as scheduled"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -29,7 +32,7 @@ func TestFormatStatusMessage_MatchesUserExample(t *testing.T) {
 	// The exact wording style requested: school + bus, no child's name.
 	kid := config.Kid{School: "École élémentaire L'Odyssée", BusLabel: "Route 140"}
 	alerts := []alertsapi.Alert{{Action: "Bus delayed by 10-15 minutes"}}
-	got := formatStatusMessage(kid, nil, alerts, nil, nil)
+	got := formatStatusMessage(kid, nil, alerts)
 	want := "École élémentaire L'Odyssée, Route 140: Bus delayed by 10-15 minutes"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -42,48 +45,67 @@ func TestFormatStatusMessage_MultipleAlertsJoined(t *testing.T) {
 		{Action: "Bus Delayed - 10 to 19 minutes"},
 		{Action: "Stop Relocated"},
 	}
-	got := formatStatusMessage(kid, nil, alerts, nil, nil)
+	got := formatStatusMessage(kid, nil, alerts)
 	want := "Example School, 140: Bus Delayed - 10 to 19 minutes; Stop Relocated"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
-func TestFormatStatusMessage_AlertsErrorReportedInsteadOfSilentlySkipped(t *testing.T) {
+func TestFormatAlertsError(t *testing.T) {
 	kid := config.Kid{School: "Example School", BusLabel: "140"}
-	got := formatStatusMessage(kid, nil, nil, errors.New("boom"), nil)
+	got := formatAlertsError(kid, nil, errors.New("boom"))
 	want := "Example School, 140: Unable to check bus status (boom)"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
-func TestFormatStatusMessage_AlertsErrorTimeout(t *testing.T) {
+func TestFormatAlertsError_Timeout(t *testing.T) {
 	kid := config.Kid{School: "Example School", BusLabel: "140"}
 	ctx, cancel := context.WithTimeout(context.Background(), 0)
 	defer cancel()
 	<-ctx.Done()
-	got := formatStatusMessage(kid, nil, nil, ctx.Err(), nil)
+	got := formatAlertsError(kid, nil, ctx.Err())
 	want := "Example School, 140: Unable to check bus status (timed out)"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
-func TestFormatStatusMessage_ScheduleErrorAppendedAsNote(t *testing.T) {
+func TestFormatAlertsStale(t *testing.T) {
 	kid := config.Kid{School: "Example School", BusLabel: "140"}
-	got := formatStatusMessage(kid, nil, nil, nil, errors.New("portal unreachable"))
-	want := "Example School, 140: Operating as scheduled [could not refresh today's schedule: portal unreachable]"
+	since := time.Date(2026, 9, 24, 7, 5, 0, 0, time.UTC)
+	got := formatAlertsStale(kid, nil, since, &retry.StatusError{Op: "GetBusNotifications", StatusCode: 503})
+	want := "Example School, 140: Unable to check bus status since 07:05 (server returned HTTP 503)"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
-func TestFormatStatusMessage_BothErrors(t *testing.T) {
-	kid := config.Kid{School: "Example School", BusLabel: "140"}
-	got := formatStatusMessage(kid, nil, nil, errors.New("alerts down"), errors.New("portal down"))
-	want := "Example School, 140: Unable to check bus status (alerts down) [could not refresh today's schedule: portal down]"
+func TestFormatScheduleError(t *testing.T) {
+	kid := config.Kid{School: "Example School"}
+	got := formatScheduleError(kid, errors.New("portal unreachable"))
+	want := "Example School: Unable to refresh today's schedule (portal unreachable)"
 	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestFormatScheduleStale(t *testing.T) {
+	kid := config.Kid{School: "Example School"}
+	since := time.Date(2026, 9, 24, 6, 30, 0, 0, time.UTC)
+	got := formatScheduleStale(kid, since, errors.New("portal unreachable"))
+	want := "Example School: Unable to refresh today's schedule since 06:30 (portal unreachable)"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDescribeErr_StatusError(t *testing.T) {
+	err := fmt.Errorf("fetching login page: %w", &retry.StatusError{Op: "portal GET /Login", StatusCode: 502, Body: "<html>long error page</html>"})
+	want := "server returned HTTP 502"
+	if got := describeErr(err); got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }

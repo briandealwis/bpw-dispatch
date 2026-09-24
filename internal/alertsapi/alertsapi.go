@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/briandealwis/bpw-dispatch/internal/logging"
+	"github.com/briandealwis/bpw-dispatch/internal/retry"
 )
 
 // Alert is one row returned by the GetBusNotifications/GetSchoolNotifications
@@ -92,7 +93,7 @@ func (c *Client) post(ctx context.Context, domain, endpoint string) ([]Alert, er
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("%s returned HTTP %d: %s", endpoint, resp.StatusCode, string(data))
+		return nil, &retry.StatusError{Op: endpoint, StatusCode: resp.StatusCode, Body: string(data)}
 	}
 
 	var out notificationsResponse

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 )
 
 // Leg is one direction's bus/pickup/dropoff details, as scraped from the
@@ -49,14 +50,34 @@ type SessionState struct {
 	Name        string `json:"name"` // "morning" or "afternoon"
 	LastMessage string `json:"last_message"`
 	Sent        bool   `json:"sent"`
+	// Failing is set once this session's notifiers have been told the alerts
+	// check is failing, so it's reported once rather than on every run, and
+	// so the next successful check is sent as an all-clear.
+	Failing bool `json:"failing,omitempty"`
+}
+
+// Failure tracks an ongoing streak of failed checks of one kind (schedule
+// refresh or alerts check) for a kid. It's nil while checks are succeeding.
+type Failure struct {
+	// Since is when the current streak of failures started.
+	Since time.Time `json:"since"`
+	// LastError is the last failure message sent to the error notifiers, so
+	// an unchanged failure isn't re-sent every run.
+	LastError string `json:"last_error,omitempty"`
+	// MainNotified records that the kid's regular notifiers were told about
+	// this streak (used for schedule failures; alerts failures track this
+	// per session via SessionState.Failing).
+	MainNotified bool `json:"main_notified,omitempty"`
 }
 
 // KidState is the persisted state for a single kid.
 type KidState struct {
-	Schedule     *Schedule     `json:"schedule,omitempty"`
-	ScheduleDate string        `json:"schedule_date,omitempty"` // YYYY-MM-DD schedule was last fetched
-	Session      *SessionState `json:"session,omitempty"`
-	AuthToken    string        `json:"auth_token,omitempty"` // cached BPWebAuth cookie for skipping login
+	Schedule        *Schedule     `json:"schedule,omitempty"`
+	ScheduleDate    string        `json:"schedule_date,omitempty"` // YYYY-MM-DD schedule was last fetched
+	Session         *SessionState `json:"session,omitempty"`
+	AuthToken       string        `json:"auth_token,omitempty"` // cached BPWebAuth cookie for skipping login
+	ScheduleFailure *Failure      `json:"schedule_failure,omitempty"`
+	AlertsFailure   *Failure      `json:"alerts_failure,omitempty"`
 }
 
 // State is the full contents of the on-disk state file, keyed by kid id.

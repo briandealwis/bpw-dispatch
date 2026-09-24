@@ -3,15 +3,27 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
+// DefaultStaleAfter is used when the config doesn't set stale_after.
+const DefaultStaleAfter = 15 * time.Minute
+
 // Config is the top-level YAML configuration for bpw-dispatch.
 type Config struct {
-	StateFile string              `yaml:"state_file"`
-	Notifiers map[string]Notifier `yaml:"notifiers"`
-	Kids      []Kid               `yaml:"kids"`
+	StateFile string `yaml:"state_file"`
+	// StaleAfter is how long a check must keep failing before the failure is
+	// reported to a kid's regular notifiers; until then failures only go to
+	// ErrorNotifiers. Written as a duration, e.g. "15m". Defaults to
+	// DefaultStaleAfter.
+	StaleAfter time.Duration `yaml:"stale_after"`
+	// ErrorNotifiers receive every failed check (deduplicated), for kids
+	// that don't set their own error_notifiers.
+	ErrorNotifiers []string            `yaml:"error_notifiers"`
+	Notifiers      map[string]Notifier `yaml:"notifiers"`
+	Kids           []Kid               `yaml:"kids"`
 }
 
 // Notifier describes one configured alert destination.
@@ -55,11 +67,23 @@ type Kid struct {
 	School string `yaml:"school"`
 	// BusLabel is the friendly bus name used in alert text (e.g. "Route 140").
 	// Defaults to the bus/route identifier scraped from the parent portal.
-	BusLabel   string                   `yaml:"bus_label"`
-	Portal     PortalConfig             `yaml:"portal"`
-	AlertMatch AlertMatch               `yaml:"alert_match"`
-	Notifiers  []string                 `yaml:"notifiers"`
-	Sessions   map[string]SessionConfig `yaml:"sessions"`
+	BusLabel   string       `yaml:"bus_label"`
+	Portal     PortalConfig `yaml:"portal"`
+	AlertMatch AlertMatch   `yaml:"alert_match"`
+	Notifiers  []string     `yaml:"notifiers"`
+	// ErrorNotifiers, if set, overrides the top-level error_notifiers for
+	// this kid.
+	ErrorNotifiers []string                 `yaml:"error_notifiers"`
+	Sessions       map[string]SessionConfig `yaml:"sessions"`
+}
+
+// ErrorNotifiersFor returns where a kid's check failures are sent: the
+// kid's own error_notifiers if set, else the top-level ones.
+func (c *Config) ErrorNotifiersFor(k Kid) []string {
+	if len(k.ErrorNotifiers) > 0 {
+		return k.ErrorNotifiers
+	}
+	return c.ErrorNotifiers
 }
 
 var validDays = map[string]bool{
@@ -112,6 +136,9 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("parsing config yaml: %w", err)
 	}
+	if c.StaleAfter == 0 {
+		c.StaleAfter = DefaultStaleAfter
+	}
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -129,11 +156,19 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("notifier %q: type is required", name)
 		}
 	}
+	if c.StaleAfter < 0 {
+		return fmt.Errorf("stale_after must not be negative (got %s)", c.StaleAfter)
+	}
 	checkNotifier := func(context, name string) error {
 		if _, ok := c.Notifiers[name]; !ok {
 			return fmt.Errorf("%s references unknown notifier %q", context, name)
 		}
 		return nil
+	}
+	for _, n := range c.ErrorNotifiers {
+		if err := checkNotifier("error_notifiers", n); err != nil {
+			return err
+		}
 	}
 	seen := map[string]bool{}
 	for _, k := range c.Kids {
@@ -149,6 +184,11 @@ func (c *Config) Validate() error {
 		}
 		if k.Portal.Domain == "" || k.Portal.Username == "" || k.Portal.Password == "" {
 			return fmt.Errorf("kid %q: portal.domain, portal.username and portal.password are all required", k.ID)
+		}
+		for _, n := range k.ErrorNotifiers {
+			if err := checkNotifier(fmt.Sprintf("kid %q error_notifiers", k.ID), n); err != nil {
+				return err
+			}
 		}
 		for _, n := range k.Notifiers {
 			if err := checkNotifier(fmt.Sprintf("kid %q", k.ID), n); err != nil {

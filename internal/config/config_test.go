@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func writeConfig(t *testing.T, contents string) string {
@@ -182,5 +183,74 @@ func TestKid_ResolveNotifiers(t *testing.T) {
 	}
 	if got := k.ResolveNotifiers("evening", "mon"); got != nil {
 		t.Errorf("evening notifiers = %v, want nil (session not configured)", got)
+	}
+}
+
+func TestLoad_StaleAfterDefault(t *testing.T) {
+	cfg, err := Load(writeConfig(t, validConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StaleAfter != DefaultStaleAfter {
+		t.Errorf("StaleAfter = %s, want default %s", cfg.StaleAfter, DefaultStaleAfter)
+	}
+}
+
+func TestLoad_StaleAfterAndErrorNotifiers(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "stale_after: 10m\nerror_notifiers: [ntfy-grandma]\n"+validConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StaleAfter != 10*time.Minute {
+		t.Errorf("StaleAfter = %s, want 10m", cfg.StaleAfter)
+	}
+	if got := cfg.ErrorNotifiersFor(cfg.Kids[0]); len(got) != 1 || got[0] != "ntfy-grandma" {
+		t.Errorf("ErrorNotifiersFor = %v, want [ntfy-grandma]", got)
+	}
+}
+
+func TestLoad_InvalidStaleAfter(t *testing.T) {
+	for _, v := range []string{"banana", "-5m"} {
+		if _, err := Load(writeConfig(t, "stale_after: "+v+"\n"+validConfig)); err == nil {
+			t.Errorf("stale_after %q: expected an error", v)
+		}
+	}
+}
+
+func TestValidate_UnknownErrorNotifier(t *testing.T) {
+	if _, err := Load(writeConfig(t, "error_notifiers: [nope]\n"+validConfig)); err == nil {
+		t.Error("expected an error for an unknown top-level error notifier")
+	}
+	perKid := `
+notifiers:
+  n: {type: ntfy, topic: t}
+kids:
+  - id: kid1
+    school: A
+    portal: {domain: a.com, username: u, password: p}
+    error_notifiers: [nope]
+`
+	if _, err := Load(writeConfig(t, perKid)); err == nil {
+		t.Error("expected an error for an unknown per-kid error notifier")
+	}
+}
+
+func TestErrorNotifiersFor_KidOverridesTopLevel(t *testing.T) {
+	c := &Config{ErrorNotifiers: []string{"top"}}
+	if got := c.ErrorNotifiersFor(Kid{}); len(got) != 1 || got[0] != "top" {
+		t.Errorf("got %v, want [top]", got)
+	}
+	if got := c.ErrorNotifiersFor(Kid{ErrorNotifiers: []string{"mine"}}); len(got) != 1 || got[0] != "mine" {
+		t.Errorf("got %v, want [mine]", got)
+	}
+}
+
+func TestLoad_ExampleConfig(t *testing.T) {
+	cfg, err := Load("../../config.example.yaml")
+	if err != nil {
+		t.Fatalf("config.example.yaml should be a valid config: %v", err)
+	}
+	if cfg.StaleAfter != 15*time.Minute || len(cfg.ErrorNotifiers) == 0 {
+		t.Errorf("example should demonstrate stale_after and error_notifiers; got %s, %v", cfg.StaleAfter, cfg.ErrorNotifiers)
 	}
 }

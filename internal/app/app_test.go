@@ -31,11 +31,22 @@ func (f *fakeScheduleFetcher) FetchSchedule(_ context.Context, _, _, _, _ string
 type fakeAlertsFetcher struct {
 	alerts []alertsapi.Alert
 	err    error
+	// errSeq, if non-empty, supplies the result of the next calls in order
+	// (nil meaning success) before falling back to err.
+	errSeq []error
 	calls  int
 }
 
 func (f *fakeAlertsFetcher) FetchAndMatch(_ context.Context, _, _, _ string) ([]alertsapi.Alert, error) {
 	f.calls++
+	if len(f.errSeq) > 0 {
+		err := f.errSeq[0]
+		f.errSeq = f.errSeq[1:]
+		if err != nil {
+			return nil, err
+		}
+		return f.alerts, nil
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -310,86 +321,6 @@ func TestRun_InactiveDay_SkipsAlertsButStillChecksSchedule(t *testing.T) {
 	}
 	if len(mainN.sent) != 0 {
 		t.Errorf("expected no alert on an inactive day, got %v", mainN.sent)
-	}
-}
-
-func TestRun_ScheduleFetchError_StillChecksAlerts(t *testing.T) {
-	kid := testKid()
-	mainN := &fakeNotifier{}
-	sf := &fakeScheduleFetcher{err: errPortalDown}
-	af := &fakeAlertsFetcher{}
-	a := &App{
-		Config:    &config.Config{Notifiers: map[string]config.Notifier{"main": {Type: "ntfy"}}, Kids: []config.Kid{kid}},
-		State:     &state.State{Kids: map[string]*state.KidState{}},
-		Alerts:    af,
-		Portal:    sf,
-		Notifiers: map[string]notify.Notifier{"main": mainN},
-		Now:       func() time.Time { return wed9am },
-	}
-
-	err := a.Run(context.Background())
-	if err == nil {
-		t.Fatal("expected Run to report the schedule fetch error")
-	}
-	if af.calls != 1 {
-		t.Errorf("alerts should still be checked even if the schedule fetch failed, got %d calls", af.calls)
-	}
-	if len(mainN.sent) != 1 {
-		t.Fatalf("an alert-status message should still be sent, got %v", mainN.sent)
-	}
-	if want := "Example School, bus: Operating as scheduled [could not refresh today's schedule: portal unreachable]"; mainN.sent[0].Text != want {
-		t.Errorf("message = %q, want %q", mainN.sent[0].Text, want)
-	}
-	ks := a.State.Kids["kid1"]
-	if ks.ScheduleDate != "" {
-		t.Errorf("ScheduleDate should stay empty after a failed fetch, so it retries next run, got %q", ks.ScheduleDate)
-	}
-}
-
-func TestRun_AlertsFetchError_SendsFailureMessageInsteadOfNothing(t *testing.T) {
-	kid := testKid()
-	mainN := &fakeNotifier{}
-	sf := &fakeScheduleFetcher{schedule: schedule140()}
-	af := &fakeAlertsFetcher{err: errAlertsDown}
-	a := &App{
-		Config:    &config.Config{Notifiers: map[string]config.Notifier{"main": {Type: "ntfy"}}, Kids: []config.Kid{kid}},
-		State:     &state.State{Kids: map[string]*state.KidState{}},
-		Alerts:    af,
-		Portal:    sf,
-		Notifiers: map[string]notify.Notifier{"main": mainN},
-		Now:       func() time.Time { return wed9am },
-	}
-
-	err := a.Run(context.Background())
-	if err == nil {
-		t.Fatal("expected Run to report the alerts fetch error")
-	}
-	if len(mainN.sent) != 1 {
-		t.Fatalf("a failure should be reported as a message, not silently dropped; got %v", mainN.sent)
-	}
-	if want := "Example School, 140: Unable to check bus status (alerts down)"; mainN.sent[0].Text != want {
-		t.Errorf("message = %q, want %q", mainN.sent[0].Text, want)
-	}
-
-	// A second run with the same failure must not resend (same dedup as a
-	// normal unchanged message).
-	if err := a.Run(context.Background()); err == nil {
-		t.Fatal("expected the second run to still report the alerts fetch error")
-	}
-	if len(mainN.sent) != 1 {
-		t.Errorf("an unchanged failure should not be resent, got %v", mainN.sent)
-	}
-
-	// Once the alerts API recovers, the recovery itself is a change worth sending.
-	af.err = nil
-	if err := a.Run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(mainN.sent) != 2 {
-		t.Fatalf("expected a follow-up message once alerts recovered, got %v", mainN.sent)
-	}
-	if want := "Example School, 140: Operating as scheduled"; mainN.sent[1].Text != want {
-		t.Errorf("recovery message = %q, want %q", mainN.sent[1].Text, want)
 	}
 }
 

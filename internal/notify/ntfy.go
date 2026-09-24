@@ -10,6 +10,7 @@ import (
 
 	"github.com/briandealwis/bpw-dispatch/internal/config"
 	"github.com/briandealwis/bpw-dispatch/internal/logging"
+	"github.com/briandealwis/bpw-dispatch/internal/retry"
 )
 
 // Ntfy sends messages via an ntfy.sh (or self-hosted ntfy) topic.
@@ -64,7 +65,7 @@ func (n *Ntfy) Send(ctx context.Context, msg Message) error {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("ntfy returned HTTP %d: %s", resp.StatusCode, string(body))
+		return &retry.StatusError{Op: "ntfy", StatusCode: resp.StatusCode, Body: string(body)}
 	}
 	return nil
 }

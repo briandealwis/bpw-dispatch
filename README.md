@@ -24,19 +24,26 @@ Each run:
    page for bus-status messages, the ChildTransportInfo page for
    schedule-change messages. Tapping the notification opens it directly.
 6. Every network call (portal login, alerts API, ntfy) has a **15s
-   timeout**. If the Alerts API check itself fails — timeout or otherwise —
-   that failure is reported as the status message instead of silently
-   sending nothing; a schedule-refresh failure is appended as a note on
-   whatever status message goes out that run. Either way you find out a
-   check is broken instead of assuming "no news" meant "all clear". The
-   failure is classified so the message names the likely cause rather than
-   a generic timeout, e.g.:
-   - `Example School, 140: Unable to check bus status (DNS lookup for
-     www.findmyschool.ca timed out)`
-   - `Example School, 140: Unable to check bus status (connection refused)`
-   - `Example School, 140: Unable to check bus status (TLS handshake failed)`
-   - `Example School, 140: Unable to check bus status (timed out)` — a
-     generic fallback when none of the above apply
+   timeout**, and transient failures (timeouts, DNS and connection errors,
+   HTTP 5xx/429) are **retried up to 5 times** with exponential backoff
+   (1s, 2s, 4s, 8s, 16s), giving up after a minute per call. Permanent
+   failures (e.g. a rejected login, an HTTP 4xx) aren't retried.
+7. When a check still fails, it's handled in two tiers so a flaky portal
+   doesn't spam you:
+   - It's sent straight away to the **`error_notifiers`** channel (once
+     per distinct error, plus a "recovered" message when it's working
+     again).
+   - The regular notifiers **keep the result of the last successful
+     check** — no error, and no repeated "Operating as scheduled" when it
+     recovers. They're only told once the check has been failing for
+     longer than **`stale_after`** (default 15 minutes), e.g.
+     `Example School, 140: Unable to check bus status since 07:05 (timed
+     out)`. After that, the next successful check is sent as an all-clear.
+
+   Failures are classified so the message names the likely cause:
+   `DNS lookup for www.findmyschool.ca timed out`, `connection refused`,
+   `TLS handshake failed`, `server returned HTTP 503`, or a generic
+   `timed out`.
 
 ## Building
 
@@ -60,12 +67,18 @@ Keep `config.yaml` out of version control — it holds portal passwords.
 
 ```yaml
 state_file: state.json
+stale_after: 15m                    # how long a check must keep failing before
+                                     # the regular notifiers are told
+error_notifiers: [ntfy-errors]      # where every failed check is reported
 
 notifiers:
   ntfy-parents:
     type: ntfy
     topic: bpw-dispatch-changeme1   # pick a hard-to-guess topic; anyone who
                                      # knows it can read your notifications
+  ntfy-errors:
+    type: ntfy
+    topic: bpw-dispatch-changeme-errors
 
 kids:
   - id: kid1

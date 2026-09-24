@@ -8,9 +8,11 @@ import (
 	"net"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/briandealwis/bpw-dispatch/internal/alertsapi"
 	"github.com/briandealwis/bpw-dispatch/internal/config"
+	"github.com/briandealwis/bpw-dispatch/internal/retry"
 	"github.com/briandealwis/bpw-dispatch/internal/state"
 )
 
@@ -31,36 +33,57 @@ func busLabel(kid config.Kid, leg *state.Leg) string {
 }
 
 // formatStatusMessage builds the per-session status text sent to
-// notifiers. It deliberately omits the kid's name — only school and bus
-// identify the message.
-//
-// alertsErr, when non-nil, means the Alerts API call itself failed (e.g.
-// timed out) — rather than silently skipping the notification in that
-// case, the failure is reported as the status so a broken check doesn't
-// look identical to no news at all. scheduleErr, when non-nil, means
-// today's schedule refresh failed this run; it's appended as a side note
-// so it doesn't get lost even though the schedule check retries silently
-// on its own every run until it succeeds.
-func formatStatusMessage(kid config.Kid, leg *state.Leg, alerts []alertsapi.Alert, alertsErr, scheduleErr error) string {
-	var status string
-	switch {
-	case alertsErr != nil:
-		status = fmt.Sprintf("Unable to check bus status (%s)", describeErr(alertsErr))
-	case len(alerts) > 0:
+// notifiers after a successful alerts check. It deliberately omits the
+// kid's name — only school and bus identify the message.
+func formatStatusMessage(kid config.Kid, leg *state.Leg, alerts []alertsapi.Alert) string {
+	status := "Operating as scheduled"
+	if len(alerts) > 0 {
 		parts := make([]string, 0, len(alerts))
 		for _, al := range alerts {
 			parts = append(parts, al.Action)
 		}
 		status = strings.Join(parts, "; ")
-	default:
-		status = "Operating as scheduled"
 	}
+	return fmt.Sprintf("%s, %s: %s", kid.School, busLabel(kid, leg), status)
+}
 
-	msg := fmt.Sprintf("%s, %s: %s", kid.School, busLabel(kid, leg), status)
-	if scheduleErr != nil {
-		msg += fmt.Sprintf(" [could not refresh today's schedule: %s]", describeErr(scheduleErr))
-	}
-	return msg
+// formatAlertsError is sent to the error notifiers when an alerts check
+// fails.
+func formatAlertsError(kid config.Kid, leg *state.Leg, err error) string {
+	return fmt.Sprintf("%s, %s: Unable to check bus status (%s)", kid.School, busLabel(kid, leg), describeErr(err))
+}
+
+// formatAlertsStale is sent to a session's regular notifiers once the
+// alerts check has been failing for longer than stale_after.
+func formatAlertsStale(kid config.Kid, leg *state.Leg, since time.Time, err error) string {
+	return fmt.Sprintf("%s, %s: Unable to check bus status since %s (%s)",
+		kid.School, busLabel(kid, leg), since.Format("15:04"), describeErr(err))
+}
+
+// formatAlertsRecovered is sent to the error notifiers when an alerts check
+// succeeds after failing.
+func formatAlertsRecovered(kid config.Kid, leg *state.Leg) string {
+	return fmt.Sprintf("%s, %s: Bus status check recovered", kid.School, busLabel(kid, leg))
+}
+
+// formatScheduleError is sent to the error notifiers when today's schedule
+// refresh fails.
+func formatScheduleError(kid config.Kid, err error) string {
+	return fmt.Sprintf("%s: Unable to refresh today's schedule (%s)", kid.School, describeErr(err))
+}
+
+// formatScheduleStale is sent to a kid's regular notifiers once today's
+// schedule refresh has been failing for longer than stale_after.
+func formatScheduleStale(kid config.Kid, since time.Time, err error) string {
+	return fmt.Sprintf("%s: Unable to refresh today's schedule since %s (%s)",
+		kid.School, since.Format("15:04"), describeErr(err))
+}
+
+// formatScheduleRecovered is sent to the error notifiers (and, if they were
+// told about the failure, the regular notifiers) when the schedule refresh
+// succeeds after failing.
+func formatScheduleRecovered(kid config.Kid) string {
+	return fmt.Sprintf("%s: Schedule refresh recovered", kid.School)
 }
 
 // describeErr classifies a network error into a short, readable phrase
@@ -87,6 +110,11 @@ func describeErr(err error) string {
 
 	if errors.Is(err, syscall.ECONNREFUSED) {
 		return "connection refused"
+	}
+
+	var statusErr *retry.StatusError
+	if errors.As(err, &statusErr) {
+		return fmt.Sprintf("server returned HTTP %d", statusErr.StatusCode)
 	}
 
 	var certErr x509.UnknownAuthorityError
