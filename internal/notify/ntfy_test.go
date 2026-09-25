@@ -40,6 +40,46 @@ func TestNtfy_Send(t *testing.T) {
 	}
 }
 
+func TestNtfy_Send_PriorityAndTags(t *testing.T) {
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n := NewNtfy(config.Notifier{Server: srv.URL, Topic: "t"})
+	err := n.Send(context.Background(), Message{Text: "hi", Priority: PriorityHigh, Tags: []string{"bus", "warning"}})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if p := got.Get("X-Priority"); p != "4" {
+		t.Errorf("X-Priority = %q, want 4", p)
+	}
+	if tags := got.Get("X-Tags"); tags != "bus,warning" {
+		t.Errorf("X-Tags = %q, want bus,warning", tags)
+	}
+}
+
+func TestNtfy_Send_NoPriorityOrTagsWhenUnset(t *testing.T) {
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n := NewNtfy(config.Notifier{Server: srv.URL, Topic: "t"})
+	if err := n.Send(context.Background(), Message{Text: "hi"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	for _, h := range []string{"X-Priority", "X-Tags"} {
+		if v := got.Get(h); v != "" {
+			t.Errorf("%s = %q, want it unset so ntfy uses its default", h, v)
+		}
+	}
+}
+
 func TestNtfy_Send_NoClickURL(t *testing.T) {
 	var gotClick string
 	gotClickSet := false

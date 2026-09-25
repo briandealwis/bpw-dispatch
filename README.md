@@ -26,6 +26,17 @@ Each run:
    `X-Click` action) to the relevant portal page for details: the Alerts
    page for bus-status messages, the ChildTransportInfo page for
    schedule-change messages. Tapping the notification opens it directly.
+   Each kind of message also gets an ntfy priority (which controls sound and
+   vibration) and emoji tags:
+
+   | Message | Priority | Shows as |
+   |---|---|---|
+   | Operating as scheduled / all-clear | default | 🚌✅ |
+   | Bus delay or other alert | high | 🚌⚠️ |
+   | Cancellation (alert mentions "cancel…" or "annul…") | urgent | 🚌🚨 |
+   | Schedule changed | high | 🚌📆 |
+   | Unable to check for longer than `stale_after` | high | 🚌❌ |
+   | Error channel: check failed / recovered | low (silent) | ⚠️ / ✅ |
 6. Every network call (portal login, alerts API, ntfy) has a **15s
    timeout**, and transient failures (timeouts, DNS and connection errors,
    HTTP 5xx/429) are **retried up to 5 times** with exponential backoff

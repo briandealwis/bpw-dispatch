@@ -9,6 +9,17 @@ import (
 	"github.com/briandealwis/bpw-dispatch/internal/config"
 )
 
+// Message priorities, following ntfy's 1–5 scale: low arrives silently,
+// default with a short vibration and sound, high with a long vibration and a
+// pop-over, and urgent with very long vibration bursts. Zero leaves the
+// priority to the notifier's default.
+const (
+	PriorityLow     = 2
+	PriorityDefault = 3
+	PriorityHigh    = 4
+	PriorityUrgent  = 5
+)
+
 // Message is a single alert to deliver.
 type Message struct {
 	Text string
@@ -16,6 +27,11 @@ type Message struct {
 	// (e.g. ntfy's "Click" action), so the recipient can jump straight to
 	// the relevant portal page for details.
 	ClickURL string
+	// Priority is one of the Priority* constants, or zero for the default.
+	Priority int
+	// Tags label the message. ntfy shows tags that are emoji shortcodes
+	// (e.g. "bus", "warning") as emoji in front of the message.
+	Tags []string
 }
 
 // Notifier delivers a single message to one destination.

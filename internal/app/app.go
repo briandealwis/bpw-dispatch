@@ -145,7 +145,7 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, now time.Time, today s
 			changed := ks.Schedule != nil && !ks.Schedule.Equal(newSched)
 			if changed {
 				logging.Logf(a.Log, "kid %s: schedule changed, sending alert to %v", kid.ID, kid.Notifiers)
-				a.send(ctx, kid.Notifiers, formatScheduleChange(kid, ks.Schedule, newSched), portalScheduleURL(kid.Portal.Domain), &errs)
+				a.send(ctx, kid.Notifiers, styleScheduleChange.message(formatScheduleChange(kid, ks.Schedule, newSched), portalScheduleURL(kid.Portal.Domain)), &errs)
 			}
 			a.recordScheduleRecovery(ctx, kid, ks, changed, errNotifiers, &errs)
 			ks.Schedule = newSched
@@ -197,7 +197,7 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, now time.Time, today s
 	msg := formatStatusMessage(kid, sess, leg, alerts)
 	if !ks.Session.Sent || ks.Session.Failing || msg != ks.Session.LastMessage {
 		logging.Logf(a.Log, "kid %s: message changed, sending to %v", kid.ID, notifierNames)
-		a.send(ctx, notifierNames, msg, portalAlertsURL(kid.Portal.Domain), &errs)
+		a.send(ctx, notifierNames, statusStyle(alerts).message(msg, portalAlertsURL(kid.Portal.Domain)), &errs)
 		ks.Session.LastMessage = msg
 		ks.Session.Sent = true
 		ks.Session.Failing = false
@@ -221,7 +221,7 @@ func (a *App) recordScheduleFailure(ctx context.Context, kid config.Kid, ks *sta
 	url := portalScheduleURL(kid.Portal.Domain)
 	if msg := formatScheduleError(kid, err); msg != f.LastError {
 		logging.Logf(a.Log, "kid %s: reporting schedule failure to error notifiers %v", kid.ID, errNotifiers)
-		a.send(ctx, errNotifiers, msg, url, errs)
+		a.send(ctx, errNotifiers, styleCheckFailed.message(msg, url), errs)
 		f.LastError = msg
 	}
 	if f.MainNotified {
@@ -232,7 +232,7 @@ func (a *App) recordScheduleFailure(ctx context.Context, kid config.Kid, ks *sta
 		return
 	}
 	logging.Logf(a.Log, "kid %s: schedule refresh failing since %s, telling %v", kid.ID, f.Since.Format("15:04"), kid.Notifiers)
-	a.send(ctx, kid.Notifiers, formatScheduleStale(kid, f.Since, err), url, errs)
+	a.send(ctx, kid.Notifiers, styleUnavailable.message(formatScheduleStale(kid, f.Since, err), url), errs)
 	f.MainNotified = true
 }
 
@@ -249,10 +249,10 @@ func (a *App) recordScheduleRecovery(ctx context.Context, kid config.Kid, ks *st
 	url := portalScheduleURL(kid.Portal.Domain)
 	msg := formatScheduleRecovered(kid)
 	if f.LastError != "" {
-		a.send(ctx, errNotifiers, msg, url, errs)
+		a.send(ctx, errNotifiers, styleCheckRecovered.message(msg, url), errs)
 	}
 	if f.MainNotified && !changed {
-		a.send(ctx, kid.Notifiers, msg+" (no changes)", url, errs)
+		a.send(ctx, kid.Notifiers, styleRecovered.message(msg+" (no changes)", url), errs)
 	}
 }
 
@@ -269,7 +269,7 @@ func (a *App) recordAlertsFailure(ctx context.Context, kid config.Kid, ks *state
 	url := portalAlertsURL(kid.Portal.Domain)
 	if msg := formatAlertsError(kid, leg, err); msg != f.LastError {
 		logging.Logf(a.Log, "kid %s: reporting alerts failure to error notifiers %v", kid.ID, errNotifiers)
-		a.send(ctx, errNotifiers, msg, url, errs)
+		a.send(ctx, errNotifiers, styleCheckFailed.message(msg, url), errs)
 		f.LastError = msg
 	}
 	if ks.Session.Failing {
@@ -281,7 +281,7 @@ func (a *App) recordAlertsFailure(ctx context.Context, kid config.Kid, ks *state
 	}
 	msg := formatAlertsStale(kid, leg, f.Since, err)
 	logging.Logf(a.Log, "kid %s: alerts check failing since %s, telling %v", kid.ID, f.Since.Format("15:04"), notifierNames)
-	a.send(ctx, notifierNames, msg, url, errs)
+	a.send(ctx, notifierNames, styleUnavailable.message(msg, url), errs)
 	ks.Session.LastMessage = msg
 	ks.Session.Sent = true
 	ks.Session.Failing = true
@@ -298,7 +298,7 @@ func (a *App) recordAlertsRecovery(ctx context.Context, kid config.Kid, ks *stat
 	}
 	ks.AlertsFailure = nil
 	if f.LastError != "" {
-		a.send(ctx, errNotifiers, formatAlertsRecovered(kid, leg), portalAlertsURL(kid.Portal.Domain), errs)
+		a.send(ctx, errNotifiers, styleCheckRecovered.message(formatAlertsRecovered(kid, leg), portalAlertsURL(kid.Portal.Domain)), errs)
 	}
 }
 
@@ -314,8 +314,7 @@ func (a *App) withRetry(ctx context.Context, name string, op func(context.Contex
 	return retry.Do(ctx, a.Retry, a.Log, name, op)
 }
 
-func (a *App) send(ctx context.Context, notifierNames []string, text, clickURL string, errs *[]error) {
-	msg := notify.Message{Text: text, ClickURL: clickURL}
+func (a *App) send(ctx context.Context, notifierNames []string, msg notify.Message, errs *[]error) {
 	for _, name := range notifierNames {
 		n, ok := a.Notifiers[name]
 		if !ok {

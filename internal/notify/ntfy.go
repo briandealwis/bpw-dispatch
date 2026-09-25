@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +53,12 @@ func (n *Ntfy) Send(ctx context.Context, msg Message) error {
 	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
 	if msg.ClickURL != "" {
 		req.Header.Set("X-Click", msg.ClickURL)
+	}
+	if msg.Priority != 0 {
+		req.Header.Set("X-Priority", strconv.Itoa(msg.Priority))
+	}
+	if len(msg.Tags) > 0 {
+		req.Header.Set("X-Tags", strings.Join(msg.Tags, ","))
 	}
 
 	start := time.Now()
