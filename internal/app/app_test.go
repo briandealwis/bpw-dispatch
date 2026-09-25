@@ -135,7 +135,7 @@ func TestRun_FirstRun_SendsInitialAllClear(t *testing.T) {
 	if af.calls != 1 {
 		t.Errorf("alerts fetched %d times, want 1", af.calls)
 	}
-	if len(mainN.sent) != 1 || mainN.sent[0].Text != "Example School, 140: Operating as scheduled" {
+	if len(mainN.sent) != 1 || mainN.sent[0].Text != "Example School, 140: Operating as scheduled (pickup 7:58 AM)" {
 		t.Errorf("main notifier got %v", mainN.sent)
 	}
 	if want := "https://example.com/Alerts"; mainN.sent[0].ClickURL != want {
@@ -201,10 +201,10 @@ func TestRun_AlertChangeMidSession_Resends(t *testing.T) {
 	if len(mainN.sent) != 2 {
 		t.Fatalf("expected 2 messages (all-clear, then delay), got %v", mainN.sent)
 	}
-	if mainN.sent[0].Text != "Example School, 140: Operating as scheduled" {
+	if mainN.sent[0].Text != "Example School, 140: Operating as scheduled (pickup 7:58 AM)" {
 		t.Errorf("first message = %q", mainN.sent[0].Text)
 	}
-	if mainN.sent[1].Text != "Example School, 140: Bus Delayed - 10 to 19 minutes" {
+	if mainN.sent[1].Text != "Example School, 140: Bus Delayed - 10 to 19 minutes (pickup 7:58 AM)" {
 		t.Errorf("second message = %q", mainN.sent[1].Text)
 	}
 }
@@ -248,11 +248,13 @@ func TestRun_ScheduleChange_SendsChangeAlertToKidDefaultNotifiers(t *testing.T) 
 
 func TestRun_SessionBoundary_ResetsAndResendsAllClear(t *testing.T) {
 	// Use a kid with no day overrides so morning->afternoon is the only
-	// thing changing between the two runs.
+	// thing changing between the two runs, and a schedule without times so
+	// both sessions' messages read identically.
 	kid := testKid()
 	kid.Sessions["afternoon"] = config.SessionConfig{Days: []string{"mon", "tue", "wed", "thu", "fri"}}
+	noTimes := &state.Schedule{Morning: &state.Leg{Bus: "140"}, Afternoon: &state.Leg{Bus: "140"}}
 
-	a, _, _, mainN, _ := newTestApp(t, kid, schedule140(), nil, wed9am)
+	a, _, _, mainN, _ := newTestApp(t, kid, noTimes, nil, wed9am)
 
 	if err := a.Run(context.Background()); err != nil {
 		t.Fatal(err)

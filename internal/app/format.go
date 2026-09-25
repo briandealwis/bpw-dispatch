@@ -13,6 +13,7 @@ import (
 	"github.com/briandealwis/bpw-dispatch/internal/alertsapi"
 	"github.com/briandealwis/bpw-dispatch/internal/config"
 	"github.com/briandealwis/bpw-dispatch/internal/retry"
+	"github.com/briandealwis/bpw-dispatch/internal/session"
 	"github.com/briandealwis/bpw-dispatch/internal/state"
 )
 
@@ -34,8 +35,10 @@ func busLabel(kid config.Kid, leg *state.Leg) string {
 
 // formatStatusMessage builds the per-session status text sent to
 // notifiers after a successful alerts check. It deliberately omits the
-// kid's name — only school and bus identify the message.
-func formatStatusMessage(kid config.Kid, leg *state.Leg, alerts []alertsapi.Alert) string {
+// kid's name — only school and bus identify the message. When the kid's
+// schedule is known, the time that matters for this session is appended:
+// the morning pickup, or the afternoon drop-off back home.
+func formatStatusMessage(kid config.Kid, sess session.Session, leg *state.Leg, alerts []alertsapi.Alert) string {
 	status := "Operating as scheduled"
 	if len(alerts) > 0 {
 		parts := make([]string, 0, len(alerts))
@@ -44,7 +47,30 @@ func formatStatusMessage(kid config.Kid, leg *state.Leg, alerts []alertsapi.Aler
 		}
 		status = strings.Join(parts, "; ")
 	}
-	return fmt.Sprintf("%s, %s: %s", kid.School, busLabel(kid, leg), status)
+	msg := fmt.Sprintf("%s, %s: %s", kid.School, busLabel(kid, leg), status)
+	if t := scheduledTime(sess, leg); t != "" {
+		msg += " (" + t + ")"
+	}
+	return msg
+}
+
+// scheduledTime describes the leg's time that matters for this session:
+// the pickup in the morning, the drop-off in the afternoon. It's empty if
+// the schedule (or that time) isn't known.
+func scheduledTime(sess session.Session, leg *state.Leg) string {
+	if leg == nil {
+		return ""
+	}
+	if sess == session.Morning {
+		if leg.PickupTime != "" {
+			return "pickup " + leg.PickupTime
+		}
+		return ""
+	}
+	if leg.DropoffTime != "" {
+		return "drop-off " + leg.DropoffTime
+	}
+	return ""
 }
 
 // formatAlertsError is sent to the error notifiers when an alerts check

@@ -194,7 +194,7 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, now time.Time, today s
 	logging.Logf(a.Log, "kid %s: got %d matching alert(s)", kid.ID, len(alerts))
 	a.recordAlertsRecovery(ctx, kid, ks, leg, errNotifiers, &errs)
 
-	msg := formatStatusMessage(kid, leg, alerts)
+	msg := formatStatusMessage(kid, sess, leg, alerts)
 	if !ks.Session.Sent || ks.Session.Failing || msg != ks.Session.LastMessage {
 		logging.Logf(a.Log, "kid %s: message changed, sending to %v", kid.ID, notifierNames)
 		a.send(ctx, notifierNames, msg, portalAlertsURL(kid.Portal.Domain), &errs)

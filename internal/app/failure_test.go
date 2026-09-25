@@ -69,7 +69,7 @@ func assertTexts(t *testing.T, channel string, n *fakeNotifier, want ...string) 
 }
 
 const (
-	allClear    = "Example School, 140: Operating as scheduled"
+	allClear    = "Example School, 140: Operating as scheduled (pickup 7:58 AM)"
 	alertsDown  = "Example School, 140: Unable to check bus status (alerts down)"
 	alertsBack  = "Example School, 140: Bus status check recovered"
 	portalDown  = "Example School: Unable to refresh today's schedule (portal unreachable)"
@@ -129,7 +129,7 @@ func TestFailure_RecoveryWithChangedStatusIsStillReported(t *testing.T) {
 	h.af.alerts = alertsDelayed
 	h.runAt(9, 10)
 
-	assertTexts(t, "main", h.main, allClear, "Example School, 140: Bus Delayed - 10 to 19 minutes")
+	assertTexts(t, "main", h.main, allClear, "Example School, 140: Bus Delayed - 10 to 19 minutes (pickup 7:58 AM)")
 }
 
 func TestFailure_ChangedErrorIsResentToErrorChannelOnly(t *testing.T) {

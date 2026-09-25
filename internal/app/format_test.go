@@ -15,13 +15,14 @@ import (
 	"github.com/briandealwis/bpw-dispatch/internal/alertsapi"
 	"github.com/briandealwis/bpw-dispatch/internal/config"
 	"github.com/briandealwis/bpw-dispatch/internal/retry"
+	"github.com/briandealwis/bpw-dispatch/internal/session"
 	"github.com/briandealwis/bpw-dispatch/internal/state"
 )
 
 func TestFormatStatusMessage_NoAlerts(t *testing.T) {
 	kid := config.Kid{School: "Example School"}
 	leg := &state.Leg{Bus: "140"}
-	got := formatStatusMessage(kid, leg, nil)
+	got := formatStatusMessage(kid, session.Morning, leg, nil)
 	want := "Example School, 140: Operating as scheduled"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -32,7 +33,7 @@ func TestFormatStatusMessage_MatchesUserExample(t *testing.T) {
 	// The exact wording style requested: school + bus, no child's name.
 	kid := config.Kid{School: "École élémentaire L'Odyssée", BusLabel: "Route 140"}
 	alerts := []alertsapi.Alert{{Action: "Bus delayed by 10-15 minutes"}}
-	got := formatStatusMessage(kid, nil, alerts)
+	got := formatStatusMessage(kid, session.Morning, nil, alerts)
 	want := "École élémentaire L'Odyssée, Route 140: Bus delayed by 10-15 minutes"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -45,10 +46,43 @@ func TestFormatStatusMessage_MultipleAlertsJoined(t *testing.T) {
 		{Action: "Bus Delayed - 10 to 19 minutes"},
 		{Action: "Stop Relocated"},
 	}
-	got := formatStatusMessage(kid, nil, alerts)
+	got := formatStatusMessage(kid, session.Morning, nil, alerts)
 	want := "Example School, 140: Bus Delayed - 10 to 19 minutes; Stop Relocated"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestFormatStatusMessage_IncludesScheduledTimeForSession(t *testing.T) {
+	kid := config.Kid{School: "École élémentaire L'Odyssée", BusLabel: "Route 140"}
+	morning := &state.Leg{Bus: "140", PickupTime: "7:58 AM", DropoffTime: "8:45 AM"}
+	afternoon := &state.Leg{Bus: "140", PickupTime: "3:30 PM", DropoffTime: "3:53 PM"}
+	delayed := []alertsapi.Alert{{Action: "Bus delayed by 10-15 minutes"}}
+
+	cases := []struct {
+		name   string
+		sess   session.Session
+		leg    *state.Leg
+		alerts []alertsapi.Alert
+		want   string
+	}{
+		{"morning shows home pickup", session.Morning, morning, nil,
+			"École élémentaire L'Odyssée, Route 140: Operating as scheduled (pickup 7:58 AM)"},
+		{"afternoon shows drop-off home", session.Afternoon, afternoon, nil,
+			"École élémentaire L'Odyssée, Route 140: Operating as scheduled (drop-off 3:53 PM)"},
+		{"delay keeps the scheduled time for reference", session.Morning, morning, delayed,
+			"École élémentaire L'Odyssée, Route 140: Bus delayed by 10-15 minutes (pickup 7:58 AM)"},
+		{"unknown schedule omits the time", session.Morning, nil, nil,
+			"École élémentaire L'Odyssée, Route 140: Operating as scheduled"},
+		{"missing time omits it", session.Afternoon, &state.Leg{Bus: "140"}, nil,
+			"École élémentaire L'Odyssée, Route 140: Operating as scheduled"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := formatStatusMessage(kid, c.sess, c.leg, c.alerts); got != c.want {
+				t.Errorf("got %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 

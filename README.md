@@ -17,8 +17,11 @@ Each run:
    **including the first check of a session even when there's nothing
    wrong** — you get one "operating as scheduled" message per session,
    then only updates.
-4. Alert text never includes the child's name — only school and bus, e.g.:
-   `École élémentaire L'Odyssée, Route 140: Bus delayed by 10-15 minutes`
+4. Alert text never includes the child's name — only school, bus, and the
+   kid's scheduled time for the session (the pickup in the morning, the
+   drop-off back home in the afternoon), e.g.:
+   `École élémentaire L'Odyssée, Route 140: Bus delayed by 10-15 minutes (pickup 7:58 AM)`
+   or `École élémentaire L'Odyssée, Route 140: Operating as scheduled (drop-off 3:53 PM)`
 5. Each ntfy.sh notification is sent with a click-through link (ntfy's
    `X-Click` action) to the relevant portal page for details: the Alerts
    page for bus-status messages, the ChildTransportInfo page for

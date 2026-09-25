@@ -43,8 +43,8 @@ type Client struct {
 
 // requestTimeout bounds every request this package makes, so a slow or
 // unresponsive Alerts API fails fast enough that its failure can be
-// reported (see app.formatStatusMessage) rather than the whole run
-// stalling past the next cron tick.
+// reported promptly rather than the whole run stalling past the next cron
+// tick.
 const requestTimeout = 15 * time.Second
 
 // NewClient returns a Client with a sane request timeout.

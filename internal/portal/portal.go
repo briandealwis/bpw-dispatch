@@ -52,8 +52,7 @@ type Client struct {
 
 // requestTimeout bounds every HTTP request this package makes, so a slow or
 // unresponsive portal fails fast enough that its failure can be reported
-// (see formatStatusMessage) rather than the whole run stalling past the
-// next cron tick.
+// promptly rather than the whole run stalling past the next cron tick.
 const requestTimeout = 15 * time.Second
 
 // NewClient returns a Client with its own cookie jar (required to carry the
