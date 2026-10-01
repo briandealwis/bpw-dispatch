@@ -238,7 +238,7 @@ func TestRun_ScheduleChange_SendsChangeAlertToKidDefaultNotifiers(t *testing.T) 
 
 	var change *notify.Message
 	for i, m := range mainN.sent {
-		if m.Text == "Example School: schedule changed - morning: bus now 141 (was 140)" {
+		if m.Text == "Example School: schedule changed\nmorning bus: 140 → 141" {
 			change = &mainN.sent[i]
 		}
 	}
@@ -374,5 +374,28 @@ func TestRun_NoLog_DoesNotPanic(t *testing.T) {
 	a, _, _, _, _ := newTestApp(t, testKid(), schedule140(), nil, wed9am)
 	if err := a.Run(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRun_ReorderedStopIsNotAScheduleChange(t *testing.T) {
+	sched := schedule140()
+	sched.Morning.PickupLocation = "BRISTOL ST @ RAYMOND ST"
+	a, sf, _, mainN, _ := newTestApp(t, testKid(), sched, nil, wed9am)
+	if err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	reordered := schedule140()
+	reordered.Morning.PickupLocation = "RAYMOND ST @ BRISTOL ST"
+	sf.schedule = reordered
+	a.Now = func() time.Time { return thu9am }
+	if err := a.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, m := range mainN.texts() {
+		if strings.Contains(m, "schedule changed") {
+			t.Errorf("reordering an intersection's streets shouldn't be reported as a change: %q", m)
+		}
 	}
 }

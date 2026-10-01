@@ -89,3 +89,31 @@ func TestScheduleEqual(t *testing.T) {
 		t.Error("nil.Equal(nil) should be true")
 	}
 }
+
+func TestSameStop(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"YORKSHIRE ST S & PRESTON ST", "PRESTON ST & YORKSHIRE ST S", true},
+		{"BRISTOL ST @ RAYMOND ST", "raymond st @ bristol st", true},
+		{"BRISTOL ST @ RAYMOND ST", "RAYMOND ST & BRISTOL ST", true},
+		{"David Saint-Jacques (7 et 8)  226-215-3325", "David Saint-Jacques (7 et 8) 226-215-3325", true},
+		{"YORKSHIRE ST S & PRESTON ST", "YORKSHIRE ST S & WATERLOO AVE", false},
+		{"MAIN ST", "ELM ST", false},
+		{"", "", true},
+	}
+	for _, c := range cases {
+		if got := SameStop(c.a, c.b); got != c.want {
+			t.Errorf("SameStop(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestLegEqual_IgnoresReorderedIntersection(t *testing.T) {
+	a := &Leg{Bus: "K500", PickupTime: "07:25", PickupLocation: "YORKSHIRE ST S & PRESTON ST"}
+	b := &Leg{Bus: "K500", PickupTime: "07:25", PickupLocation: "PRESTON ST & YORKSHIRE ST S"}
+	if !a.Equal(b) {
+		t.Error("legs differing only in the order of an intersection's streets should be equal")
+	}
+}

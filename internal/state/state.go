@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -19,12 +21,37 @@ type Leg struct {
 	DropoffLocation string `json:"dropoff_location"`
 }
 
-// Equal reports whether two legs (including nil) are the same.
+// Equal reports whether two legs (including nil) are the same. Stops are
+// compared with SameStop, so the portal reordering an intersection's
+// streets doesn't count as a change.
 func (l *Leg) Equal(o *Leg) bool {
 	if l == nil || o == nil {
 		return l == o
 	}
-	return *l == *o
+	return l.Bus == o.Bus &&
+		l.PickupTime == o.PickupTime &&
+		l.DropoffTime == o.DropoffTime &&
+		SameStop(l.PickupLocation, o.PickupLocation) &&
+		SameStop(l.DropoffLocation, o.DropoffLocation)
+}
+
+// SameStop reports whether two stop descriptions name the same place,
+// ignoring case, extra spaces, and the order of an intersection's streets
+// (the portal has reported "YORKSHIRE ST S & PRESTON ST" one day and
+// "PRESTON ST & YORKSHIRE ST S" the next for the same stop).
+func SameStop(a, b string) bool {
+	return normalizeStop(a) == normalizeStop(b)
+}
+
+func normalizeStop(s string) string {
+	s = strings.ToUpper(strings.Join(strings.Fields(s), " "))
+	for _, sep := range []string{" & ", " @ "} {
+		if streets := strings.Split(s, sep); len(streets) == 2 {
+			sort.Strings(streets)
+			return streets[0] + " & " + streets[1]
+		}
+	}
+	return s
 }
 
 // Schedule is a kid's morning (to school) and afternoon (from school) bus

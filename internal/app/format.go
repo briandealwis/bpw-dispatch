@@ -157,12 +157,17 @@ func describeErr(err error) string {
 }
 
 // formatScheduleChange builds the text sent when a kid's scraped schedule
-// differs from the previous day's, describing what changed on each leg.
+// differs from the previous one: a header line, then one line per field
+// that actually changed, showing old → new, e.g.
+//
+//	DSJ: schedule changed
+//	morning pickup: 07:25 → 07:24
+//	afternoon drop-off: 14:55 → 15:08
 func formatScheduleChange(kid config.Kid, old, new *state.Schedule) string {
-	var changes []string
-	changes = append(changes, legChanges("morning", old.Morning, new.Morning)...)
-	changes = append(changes, legChanges("afternoon", old.Afternoon, new.Afternoon)...)
-	return fmt.Sprintf("%s: schedule changed - %s", kid.School, strings.Join(changes, "; "))
+	lines := []string{kid.School + ": schedule changed"}
+	lines = append(lines, legChanges("morning", old.Morning, new.Morning)...)
+	lines = append(lines, legChanges("afternoon", old.Afternoon, new.Afternoon)...)
+	return strings.Join(lines, "\n")
 }
 
 func legChanges(label string, old, new *state.Leg) []string {
@@ -170,21 +175,37 @@ func legChanges(label string, old, new *state.Leg) []string {
 		return nil
 	}
 	if old == nil {
-		return []string{fmt.Sprintf("%s bus added: %s, pickup %s at %s, dropoff %s at %s",
+		return []string{fmt.Sprintf("%s bus added: %s, pickup %s at %s, drop-off %s at %s",
 			label, new.Bus, new.PickupTime, new.PickupLocation, new.DropoffTime, new.DropoffLocation)}
 	}
 	if new == nil {
 		return []string{fmt.Sprintf("%s bus removed (was %s)", label, old.Bus)}
 	}
-	var parts []string
+	var lines []string
+	changed := func(field, before, after string) {
+		lines = append(lines, fmt.Sprintf("%s %s: %s → %s", label, field, orNone(before), orNone(after)))
+	}
 	if old.Bus != new.Bus {
-		parts = append(parts, fmt.Sprintf("bus now %s (was %s)", new.Bus, old.Bus))
+		changed("bus", old.Bus, new.Bus)
 	}
-	if old.PickupTime != new.PickupTime || old.PickupLocation != new.PickupLocation {
-		parts = append(parts, fmt.Sprintf("pickup now %s at %s", new.PickupTime, new.PickupLocation))
+	if old.PickupTime != new.PickupTime {
+		changed("pickup", old.PickupTime, new.PickupTime)
 	}
-	if old.DropoffTime != new.DropoffTime || old.DropoffLocation != new.DropoffLocation {
-		parts = append(parts, fmt.Sprintf("dropoff now %s at %s", new.DropoffTime, new.DropoffLocation))
+	if !state.SameStop(old.PickupLocation, new.PickupLocation) {
+		changed("pickup stop", old.PickupLocation, new.PickupLocation)
 	}
-	return []string{fmt.Sprintf("%s: %s", label, strings.Join(parts, ", "))}
+	if old.DropoffTime != new.DropoffTime {
+		changed("drop-off", old.DropoffTime, new.DropoffTime)
+	}
+	if !state.SameStop(old.DropoffLocation, new.DropoffLocation) {
+		changed("drop-off stop", old.DropoffLocation, new.DropoffLocation)
+	}
+	return lines
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+	return s
 }
