@@ -158,11 +158,11 @@ func describeErr(err error) string {
 
 // formatScheduleChange builds the text sent when a kid's scraped schedule
 // differs from the previous one: a header line, then one line per field
-// that actually changed, showing old → new, e.g.
+// that actually changed, showing the new value and what it was, e.g.
 //
 //	DSJ: schedule changed
-//	morning pickup: 07:25 → 07:24
-//	afternoon drop-off: 14:55 → 15:08
+//	morning pickup: 07:24 (was: 07:25)
+//	afternoon drop-off: 15:08 (was: 14:55)
 func formatScheduleChange(kid config.Kid, old, new *state.Schedule) string {
 	lines := []string{kid.School + ": schedule changed"}
 	lines = append(lines, legChanges("morning", old.Morning, new.Morning)...)
@@ -179,11 +179,11 @@ func legChanges(label string, old, new *state.Leg) []string {
 			label, new.Bus, new.PickupTime, new.PickupLocation, new.DropoffTime, new.DropoffLocation)}
 	}
 	if new == nil {
-		return []string{fmt.Sprintf("%s bus removed (was %s)", label, old.Bus)}
+		return []string{fmt.Sprintf("%s bus removed (was: %s)", label, orNone(old.Bus))}
 	}
 	var lines []string
 	changed := func(field, before, after string) {
-		lines = append(lines, fmt.Sprintf("%s %s: %s → %s", label, field, orNone(before), orNone(after)))
+		lines = append(lines, fmt.Sprintf("%s %s: %s (was: %s)", label, field, orNone(after), orNone(before)))
 	}
 	if old.Bus != new.Bus {
 		changed("bus", old.Bus, new.Bus)
@@ -191,13 +191,13 @@ func legChanges(label string, old, new *state.Leg) []string {
 	if old.PickupTime != new.PickupTime {
 		changed("pickup", old.PickupTime, new.PickupTime)
 	}
-	if !state.SameStop(old.PickupLocation, new.PickupLocation) {
+	if old.PickupLocation != new.PickupLocation {
 		changed("pickup stop", old.PickupLocation, new.PickupLocation)
 	}
 	if old.DropoffTime != new.DropoffTime {
 		changed("drop-off", old.DropoffTime, new.DropoffTime)
 	}
-	if !state.SameStop(old.DropoffLocation, new.DropoffLocation) {
+	if old.DropoffLocation != new.DropoffLocation {
 		changed("drop-off stop", old.DropoffLocation, new.DropoffLocation)
 	}
 	return lines
@@ -205,7 +205,7 @@ func legChanges(label string, old, new *state.Leg) []string {
 
 func orNone(s string) string {
 	if s == "" {
-		return "(none)"
+		return "none"
 	}
 	return s
 }

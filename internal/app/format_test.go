@@ -265,7 +265,7 @@ func TestFormatScheduleChange_BusChanged(t *testing.T) {
 	old := &state.Schedule{Morning: &state.Leg{Bus: "140", PickupTime: "7:58 AM", PickupLocation: "Elm St"}}
 	updated := &state.Schedule{Morning: &state.Leg{Bus: "141", PickupTime: "7:58 AM", PickupLocation: "Elm St"}}
 	got := formatScheduleChange(kid, old, updated)
-	want := "Example School: schedule changed\nmorning bus: 140 → 141"
+	want := "Example School: schedule changed\nmorning bus: 141 (was: 140)"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -290,16 +290,16 @@ func TestFormatScheduleChange_LegRemoved(t *testing.T) {
 	old := &state.Schedule{Morning: &state.Leg{Bus: "140"}, Afternoon: &state.Leg{Bus: "140"}}
 	updated := &state.Schedule{Morning: &state.Leg{Bus: "140"}, Afternoon: nil}
 	got := formatScheduleChange(kid, old, updated)
-	want := "Example School: schedule changed\nafternoon bus removed (was 140)"
+	want := "Example School: schedule changed\nafternoon bus removed (was: 140)"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
 // TestFormatScheduleChange_RealDSJChange replays a real change seen on the
-// francobus portal: the morning pickup moved by a minute (with the stop's
-// streets listed in the opposite order, which isn't a real change) and the
-// afternoon drop-off moved by 13 minutes.
+// francobus portal: the morning pickup moved by a minute and its stop's
+// streets were listed in the opposite order (which can mean a different
+// corner, so it's reported), and the afternoon drop-off moved by 13 minutes.
 func TestFormatScheduleChange_RealDSJChange(t *testing.T) {
 	kid := config.Kid{School: "DSJ"}
 	old := &state.Schedule{
@@ -315,7 +315,10 @@ func TestFormatScheduleChange_RealDSJChange(t *testing.T) {
 			DropoffTime: "15:08", DropoffLocation: "PRESTON ST & YORKSHIRE ST S"},
 	}
 	got := formatScheduleChange(kid, old, updated)
-	want := "DSJ: schedule changed\nmorning pickup: 07:25 → 07:24\nafternoon drop-off: 14:55 → 15:08"
+	want := "DSJ: schedule changed\n" +
+		"morning pickup: 07:24 (was: 07:25)\n" +
+		"morning pickup stop: PRESTON ST & YORKSHIRE ST S (was: YORKSHIRE ST S & PRESTON ST)\n" +
+		"afternoon drop-off: 15:08 (was: 14:55)"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -327,10 +330,10 @@ func TestFormatScheduleChange_StopAndMultipleFields(t *testing.T) {
 	updated := &state.Schedule{Morning: &state.Leg{Bus: "141", PickupTime: "8:05 AM", PickupLocation: "ELM ST @ PINE ST", DropoffTime: "8:45 AM"}}
 	got := formatScheduleChange(kid, old, updated)
 	want := "Example School: schedule changed\n" +
-		"morning bus: 140 → 141\n" +
-		"morning pickup: 7:58 AM → 8:05 AM\n" +
-		"morning pickup stop: BRISTOL ST @ RAYMOND ST → ELM ST @ PINE ST\n" +
-		"morning drop-off: (none) → 8:45 AM"
+		"morning bus: 141 (was: 140)\n" +
+		"morning pickup: 8:05 AM (was: 7:58 AM)\n" +
+		"morning pickup stop: ELM ST @ PINE ST (was: BRISTOL ST @ RAYMOND ST)\n" +
+		"morning drop-off: 8:45 AM (was: none)"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}

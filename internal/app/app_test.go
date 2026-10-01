@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -238,7 +239,7 @@ func TestRun_ScheduleChange_SendsChangeAlertToKidDefaultNotifiers(t *testing.T) 
 
 	var change *notify.Message
 	for i, m := range mainN.sent {
-		if m.Text == "Example School: schedule changed\nmorning bus: 140 → 141" {
+		if m.Text == "Example School: schedule changed\nmorning bus: 141 (was: 140)" {
 			change = &mainN.sent[i]
 		}
 	}
@@ -377,7 +378,9 @@ func TestRun_NoLog_DoesNotPanic(t *testing.T) {
 	}
 }
 
-func TestRun_ReorderedStopIsNotAScheduleChange(t *testing.T) {
+func TestRun_ReorderedStopIsAScheduleChange(t *testing.T) {
+	// The order of an intersection's streets can say which corner the stop
+	// is on, so a reordering is reported rather than ignored.
 	sched := schedule140()
 	sched.Morning.PickupLocation = "BRISTOL ST @ RAYMOND ST"
 	a, sf, _, mainN, _ := newTestApp(t, testKid(), sched, nil, wed9am)
@@ -393,9 +396,8 @@ func TestRun_ReorderedStopIsNotAScheduleChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, m := range mainN.texts() {
-		if strings.Contains(m, "schedule changed") {
-			t.Errorf("reordering an intersection's streets shouldn't be reported as a change: %q", m)
-		}
+	want := "Example School: schedule changed\nmorning pickup stop: RAYMOND ST @ BRISTOL ST (was: BRISTOL ST @ RAYMOND ST)"
+	if !slices.Contains(mainN.texts(), want) {
+		t.Errorf("expected %q among %q", want, mainN.texts())
 	}
 }
