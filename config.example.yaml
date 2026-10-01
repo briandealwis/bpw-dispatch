@@ -62,8 +62,9 @@ kids:
         days: [mon, tue, wed, thu, fri]
       afternoon:
         days: [mon, tue, wed, thu, fri]
-        # Grandma picks this kid up Wed/Fri afternoons and only wants
-        # alerts on those two days.
+        # Grandma picks this kid up Wed/Fri afternoons and wants alerts on
+        # those two days only; the parents still want every afternoon. An
+        # override *replaces* the notifiers for that day, so list both.
         day_overrides:
-          wed: [ntfy-grandma]
-          fri: [ntfy-grandma]
+          wed: [ntfy-parents, ntfy-grandma]
+          fri: [ntfy-parents, ntfy-grandma]

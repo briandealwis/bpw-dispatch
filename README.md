@@ -111,9 +111,11 @@ kids:
         days: [mon, tue, wed, thu, fri]
       afternoon:
         days: [mon, tue, wed, thu, fri]
-        day_overrides:               # e.g. grandma picks up Wed/Fri
-          wed: [ntfy-grandma]
-          fri: [ntfy-grandma]
+        # Grandma also gets Wed/Fri afternoons. An override *replaces*
+        # the notifiers for that day, so list everyone who should get it.
+        day_overrides:
+          wed: [ntfy-parents, ntfy-grandma]
+          fri: [ntfy-parents, ntfy-grandma]
 ```
 
 See `config.example.yaml` for a complete two-kid example, including the
