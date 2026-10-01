@@ -53,9 +53,16 @@ func (f *fakeAlertsFetcher) FetchAndMatch(_ context.Context, _, _, _ string) ([]
 	return f.alerts, nil
 }
 
-type fakeNotifier struct{ sent []notify.Message }
+type fakeNotifier struct {
+	sent []notify.Message
+	// err, if set, makes Send fail without delivering anything.
+	err error
+}
 
 func (f *fakeNotifier) Send(_ context.Context, msg notify.Message) error {
+	if f.err != nil {
+		return f.err
+	}
 	f.sent = append(f.sent, msg)
 	return nil
 }

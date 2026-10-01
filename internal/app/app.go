@@ -142,15 +142,22 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, now time.Time, today s
 			a.recordScheduleFailure(ctx, kid, ks, now, err, errNotifiers, &errs)
 		} else {
 			logging.Logf(a.Log, "kid %s: schedule fetched", kid.ID)
+			ks.AuthToken = newToken
 			changed := ks.Schedule != nil && !ks.Schedule.Equal(newSched)
+			delivered := true
 			if changed {
 				logging.Logf(a.Log, "kid %s: schedule changed, sending alert to %v", kid.ID, kid.Notifiers)
-				a.send(ctx, kid.Notifiers, styleScheduleChange.message(formatScheduleChange(kid, ks.Schedule, newSched), portalScheduleURL(kid.Portal.Domain)), &errs)
+				delivered = a.send(ctx, kid.Notifiers, styleScheduleChange.message(formatScheduleChange(kid, ks.Schedule, newSched), portalScheduleURL(kid.Portal.Domain)), &errs)
 			}
 			a.recordScheduleRecovery(ctx, kid, ks, changed, errNotifiers, &errs)
-			ks.Schedule = newSched
-			ks.ScheduleDate = today
-			ks.AuthToken = newToken
+			if delivered {
+				ks.Schedule = newSched
+				ks.ScheduleDate = today
+			} else {
+				// Keep the old schedule so the next run detects (and alerts
+				// on) the change again, rather than losing it.
+				logging.Logf(a.Log, "kid %s: schedule-change alert not delivered; will retry next run", kid.ID)
+			}
 		}
 	} else {
 		logging.Logf(a.Log, "kid %s: schedule already checked today, skipping", kid.ID)
@@ -197,10 +204,13 @@ func (a *App) runKid(ctx context.Context, kid config.Kid, now time.Time, today s
 	msg := formatStatusMessage(kid, sess, leg, alerts)
 	if !ks.Session.Sent || ks.Session.Failing || msg != ks.Session.LastMessage {
 		logging.Logf(a.Log, "kid %s: message changed, sending to %v", kid.ID, notifierNames)
-		a.send(ctx, notifierNames, statusStyle(alerts).message(msg, portalAlertsURL(kid.Portal.Domain)), &errs)
-		ks.Session.LastMessage = msg
-		ks.Session.Sent = true
-		ks.Session.Failing = false
+		if a.send(ctx, notifierNames, statusStyle(alerts).message(msg, portalAlertsURL(kid.Portal.Domain)), &errs) {
+			ks.Session.LastMessage = msg
+			ks.Session.Sent = true
+			ks.Session.Failing = false
+		} else {
+			logging.Logf(a.Log, "kid %s: status not delivered; will retry next run", kid.ID)
+		}
 	} else {
 		logging.Logf(a.Log, "kid %s: message unchanged, not sending", kid.ID)
 	}
@@ -221,8 +231,9 @@ func (a *App) recordScheduleFailure(ctx context.Context, kid config.Kid, ks *sta
 	url := portalScheduleURL(kid.Portal.Domain)
 	if msg := formatScheduleError(kid, err); msg != f.LastError {
 		logging.Logf(a.Log, "kid %s: reporting schedule failure to error notifiers %v", kid.ID, errNotifiers)
-		a.send(ctx, errNotifiers, styleCheckFailed.message(msg, url), errs)
-		f.LastError = msg
+		if a.send(ctx, errNotifiers, styleCheckFailed.message(msg, url), errs) {
+			f.LastError = msg
+		}
 	}
 	if f.MainNotified {
 		return
@@ -232,8 +243,9 @@ func (a *App) recordScheduleFailure(ctx context.Context, kid config.Kid, ks *sta
 		return
 	}
 	logging.Logf(a.Log, "kid %s: schedule refresh failing since %s, telling %v", kid.ID, f.Since.Format("15:04"), kid.Notifiers)
-	a.send(ctx, kid.Notifiers, styleUnavailable.message(formatScheduleStale(kid, f.Since, err), url), errs)
-	f.MainNotified = true
+	if a.send(ctx, kid.Notifiers, styleUnavailable.message(formatScheduleStale(kid, f.Since, err), url), errs) {
+		f.MainNotified = true
+	}
 }
 
 // recordScheduleRecovery ends a schedule failure streak, telling the error
@@ -269,8 +281,9 @@ func (a *App) recordAlertsFailure(ctx context.Context, kid config.Kid, ks *state
 	url := portalAlertsURL(kid.Portal.Domain)
 	if msg := formatAlertsError(kid, leg, err); msg != f.LastError {
 		logging.Logf(a.Log, "kid %s: reporting alerts failure to error notifiers %v", kid.ID, errNotifiers)
-		a.send(ctx, errNotifiers, styleCheckFailed.message(msg, url), errs)
-		f.LastError = msg
+		if a.send(ctx, errNotifiers, styleCheckFailed.message(msg, url), errs) {
+			f.LastError = msg
+		}
 	}
 	if ks.Session.Failing {
 		return
@@ -281,10 +294,11 @@ func (a *App) recordAlertsFailure(ctx context.Context, kid config.Kid, ks *state
 	}
 	msg := formatAlertsStale(kid, leg, f.Since, err)
 	logging.Logf(a.Log, "kid %s: alerts check failing since %s, telling %v", kid.ID, f.Since.Format("15:04"), notifierNames)
-	a.send(ctx, notifierNames, styleUnavailable.message(msg, url), errs)
-	ks.Session.LastMessage = msg
-	ks.Session.Sent = true
-	ks.Session.Failing = true
+	if a.send(ctx, notifierNames, styleUnavailable.message(msg, url), errs) {
+		ks.Session.LastMessage = msg
+		ks.Session.Sent = true
+		ks.Session.Failing = true
+	}
 }
 
 // recordAlertsRecovery ends an alerts failure streak, telling the error
@@ -314,11 +328,19 @@ func (a *App) withRetry(ctx context.Context, name string, op func(context.Contex
 	return retry.Do(ctx, a.Retry, a.Log, name, op)
 }
 
-func (a *App) send(ctx context.Context, notifierNames []string, msg notify.Message, errs *[]error) {
+// send delivers msg to each named notifier (retrying transient failures),
+// recording any failure in errs. It reports whether every notifier got the
+// message; callers only update their "already sent" state when it did, so
+// an undelivered message is tried again on the next run. (If only some
+// notifiers failed, the retry re-sends to all of them — a duplicate is
+// better than a missed alert.)
+func (a *App) send(ctx context.Context, notifierNames []string, msg notify.Message, errs *[]error) bool {
+	delivered := true
 	for _, name := range notifierNames {
 		n, ok := a.Notifiers[name]
 		if !ok {
 			*errs = append(*errs, fmt.Errorf("notifier %q not found", name))
+			delivered = false
 			continue
 		}
 		logging.Logf(a.Log, "notifier %s: sending starting", name)
@@ -328,10 +350,12 @@ func (a *App) send(ctx context.Context, notifierNames []string, msg notify.Messa
 		if err != nil {
 			logging.Logf(a.Log, "notifier %s: sending failed: %v", name, err)
 			*errs = append(*errs, fmt.Errorf("sending via %q: %w", name, err))
+			delivered = false
 		} else {
 			logging.Logf(a.Log, "notifier %s: sent", name)
 		}
 	}
+	return delivered
 }
 
 // portalScheduleURL is where a parent can see a kid's current pickup/dropoff
